@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import platform
 import subprocess
+import time
+import wave
 
 
 class AudioPlayer:
@@ -10,6 +12,8 @@ class AudioPlayer:
         self._process: subprocess.Popen | None = None
         self._current_path: Path | None = None
         self._is_windows = platform.system() == "Windows"
+        self._started_at: float | None = None
+        self._duration_ms: int | None = None
         if self._is_windows:
             import winsound
 
@@ -21,6 +25,14 @@ class AudioPlayer:
     def current_path(self) -> Path | None:
         return self._current_path
 
+    def current_position_ms(self) -> int:
+        if self._started_at is None:
+            return 0
+        elapsed = int((time.monotonic() - self._started_at) * 1000)
+        if self._duration_ms is not None:
+            return max(0, min(elapsed, self._duration_ms))
+        return max(0, elapsed)
+
     def is_playing(self) -> bool:
         if self._is_windows:
             return self._current_path is not None
@@ -29,6 +41,8 @@ class AudioPlayer:
     def play(self, path: Path) -> None:
         self.stop()
         self._current_path = path
+        self._started_at = time.monotonic()
+        self._duration_ms = self._read_duration_ms(path)
 
         if self._is_windows and self._winsound is not None:
             self._winsound.PlaySound(
@@ -56,3 +70,17 @@ class AudioPlayer:
                 self._process.kill()
         self._process = None
         self._current_path = None
+        self._started_at = None
+        self._duration_ms = None
+
+    @staticmethod
+    def _read_duration_ms(path: Path) -> int | None:
+        try:
+            with wave.open(str(path), 'rb') as wav_file:
+                sample_rate = wav_file.getframerate()
+                frame_count = wav_file.getnframes()
+            if sample_rate <= 0:
+                return None
+            return int(frame_count * 1000 / sample_rate)
+        except Exception:
+            return None

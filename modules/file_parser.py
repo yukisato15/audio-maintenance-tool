@@ -11,6 +11,8 @@ IGNORED_WAV_PREFIXES = (
     "._",
     ".renaming_tmp_",
     ".undo_tmp_",
+    ".trim_backup_",
+    ".trim_tmp_",
 )
 
 

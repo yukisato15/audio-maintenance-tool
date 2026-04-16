@@ -6,10 +6,15 @@ from pathlib import Path
 import json
 import shutil
 
+from modules.audio_editor import TRIM_BACKUP_PREFIX
 from modules.file_parser import ParsedAudioFile
 
 
 UNDO_MANIFEST_NAME = ".rename_undo.json"
+
+
+def _trim_backup_path(path: Path) -> Path:
+    return path.with_name(f"{TRIM_BACKUP_PREFIX}{path.name}")
 
 
 @dataclass(slots=True)
@@ -145,6 +150,10 @@ def undo_last_rename(folder: Path, progress_callback: Callable[[float], None] | 
         else:
             continue
         operations.append((source, target))
+        backup_source = _trim_backup_path(source)
+        backup_target = _trim_backup_path(target)
+        if backup_source.exists():
+            operations.append((backup_source, backup_target))
 
     total_steps = max(len(operations), 1)
     temp_records: list[tuple[Path, Path, Path]] = []
@@ -206,6 +215,9 @@ def execute_rename_plan(
             else:
                 destination = folder / entry.new_filename
 
+            backup_source = _trim_backup_path(original_path)
+            backup_destination = _trim_backup_path(destination)
+
             if destination.exists():
                 raise FileExistsError(f"Destination already exists: {destination.name}")
 
@@ -216,6 +228,11 @@ def execute_rename_plan(
                 shutil.move(str(temp_path), str(destination))
             else:
                 temp_path.rename(destination)
+
+            if backup_source.exists():
+                if backup_destination.exists():
+                    raise FileExistsError(f"Trim backup destination already exists: {backup_destination.name}")
+                backup_source.rename(backup_destination)
 
             if progress_callback:
                 progress_callback((total_steps + step) / (total_steps * 2))

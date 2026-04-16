@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 SETTINGS_PATH = Path.home() / ".audio_batch_renamer_settings.json"
+WORKFLOW_STATE_PATH = Path.home() / ".audio_batch_renamer_state.json"
 DEFAULT_SETTINGS = {
     "digits": "3桁",
     "keep_text": True,
@@ -32,3 +33,21 @@ def save_settings(settings: dict) -> None:
     merged = dict(DEFAULT_SETTINGS)
     merged.update(settings)
     SETTINGS_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_workflow_state() -> dict:
+    if not WORKFLOW_STATE_PATH.exists():
+        return {}
+    try:
+        data = json.loads(WORKFLOW_STATE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_workflow_state(state: dict) -> None:
+    WORKFLOW_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def clear_workflow_state() -> None:
+    WORKFLOW_STATE_PATH.unlink(missing_ok=True)
