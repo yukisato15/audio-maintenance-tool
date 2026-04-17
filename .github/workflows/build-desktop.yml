@@ -1,0 +1,61 @@
+name: Build Desktop Apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform_name: windows
+            artifact_name: 音声整備ツール-windows
+          - os: macos-latest
+            platform_name: macos
+            artifact_name: 音声整備ツール-macos
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build Windows app
+        if: matrix.platform_name == 'windows'
+        run: python build_windows_app.py
+
+      - name: Build macOS app
+        if: matrix.platform_name == 'macos'
+        run: ./build_macos_app.sh
+
+      - name: Package Windows app
+        if: matrix.platform_name == 'windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/音声整備ツール/*" -DestinationPath "dist/音声整備ツール-windows.zip" -Force
+
+      - name: Package macOS app
+        if: matrix.platform_name == 'macos'
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent "dist/音声整備ツール.app" "dist/音声整備ツール-macos.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/*.zip
+          if-no-files-found: error
