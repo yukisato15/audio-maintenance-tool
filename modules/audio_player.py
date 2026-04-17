@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import platform
 import threading
 import wave
 
@@ -21,7 +20,6 @@ class ScheduledChunk:
 class AudioPlayer:
     def __init__(self) -> None:
         self._current_path: Path | None = None
-        self._is_windows = platform.system() == "Windows"
         self._duration_ms: int | None = None
         self._stream = None
         self._audio_data: np.ndarray | None = None
@@ -32,12 +30,6 @@ class AudioPlayer:
         self._scheduled_chunks: list[ScheduledChunk] = []
         self._playing = False
         self._lock = threading.Lock()
-        if self._is_windows:
-            import winsound
-
-            self._winsound = winsound
-        else:
-            self._winsound = None
 
     @property
     def current_path(self) -> Path | None:
@@ -52,33 +44,25 @@ class AudioPlayer:
             audible_frame = self._audible_frame_position
             chunks = list(self._scheduled_chunks)
             stream = self._stream
-        if self._is_windows:
-            position_ms = int(audible_frame * 1000 / sample_rate)
-            if duration_ms is not None:
-                return max(0, min(position_ms, duration_ms))
-            return max(0, position_ms)
-        else:
-            stream_time = None
-            if stream is not None:
-                try:
-                    stream_time = float(stream.time)
-                except Exception:
-                    stream_time = None
-            if stream_time is not None and chunks:
-                audible_frame = self._frame_at_stream_time(stream_time, chunks, audible_frame)
-                with self._lock:
-                    self._audible_frame_position = audible_frame
-                    self._scheduled_chunks = [
-                        chunk for chunk in self._scheduled_chunks if chunk.dac_end_time >= stream_time - 0.25
-                    ]
-            position_ms = int(audible_frame * 1000 / sample_rate)
-            if duration_ms is not None:
-                return max(0, min(position_ms, duration_ms))
-            return max(0, position_ms)
+        stream_time = None
+        if stream is not None:
+            try:
+                stream_time = float(stream.time)
+            except Exception:
+                stream_time = None
+        if stream_time is not None and chunks:
+            audible_frame = self._frame_at_stream_time(stream_time, chunks, audible_frame)
+            with self._lock:
+                self._audible_frame_position = audible_frame
+                self._scheduled_chunks = [
+                    chunk for chunk in self._scheduled_chunks if chunk.dac_end_time >= stream_time - 0.25
+                ]
+        position_ms = int(audible_frame * 1000 / sample_rate)
+        if duration_ms is not None:
+            return max(0, min(position_ms, duration_ms))
+        return max(0, position_ms)
 
     def is_playing(self) -> bool:
-        if self._is_windows:
-            return self._current_path is not None
         with self._lock:
             if not self._playing:
                 return False
@@ -90,13 +74,6 @@ class AudioPlayer:
         self.stop()
         self._current_path = path
         self._duration_ms = self._read_duration_ms(path)
-
-        if self._is_windows and self._winsound is not None:
-            self._winsound.PlaySound(
-                str(path),
-                self._winsound.SND_FILENAME | self._winsound.SND_ASYNC,
-            )
-            return
 
         audio_data, sample_rate, channels = self._load_wav(path)
         with self._lock:
@@ -147,8 +124,6 @@ class AudioPlayer:
         self._stream.start()
 
     def stop(self) -> None:
-        if self._is_windows and self._winsound is not None:
-            self._winsound.PlaySound(None, self._winsound.SND_PURGE)
         with self._lock:
             stream = self._stream
             self._stream = None
