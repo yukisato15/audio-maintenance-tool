@@ -33,7 +33,8 @@ def write_rename_log(rows: list[dict[str, str]], destination: Path) -> None:
                 fieldnames.append(name)
                 seen.add(name)
 
-    with destination.open("w", newline="", encoding="utf-8-sig") as csv_file:
+    with destination.open("w", newline="", encoding="utf-8") as csv_file:
+        csv_file.write("\ufeff")
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)

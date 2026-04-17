@@ -6,15 +6,11 @@ from pathlib import Path
 import json
 import shutil
 
-from modules.audio_editor import TRIM_BACKUP_PREFIX
+from modules.audio_editor import move_trim_backup_reference
 from modules.file_parser import ParsedAudioFile
 
 
 UNDO_MANIFEST_NAME = ".rename_undo.json"
-
-
-def _trim_backup_path(path: Path) -> Path:
-    return path.with_name(f"{TRIM_BACKUP_PREFIX}{path.name}")
 
 
 @dataclass(slots=True)
@@ -36,10 +32,11 @@ class RenameSettings:
     ng_folder_name: str = "_NG"
 
 
-def _build_filename(file_item: ParsedAudioFile, new_index: int, digits: int, keep_text: bool) -> str:
+def _build_filename(file_item: ParsedAudioFile, new_index: int, digits: int, keep_text: bool, text_value: str | None = None) -> str:
     number = f"{new_index:0{digits}d}"
-    if keep_text and file_item.text_portion:
-        return f"{number}{file_item.text_portion}{file_item.path.suffix.lower()}"
+    effective_text = file_item.text_portion if text_value is None else text_value
+    if keep_text and effective_text:
+        return f"{number}{effective_text}{file_item.path.suffix.lower()}"
     return f"{number}{file_item.path.suffix.lower()}"
 
 
@@ -54,6 +51,7 @@ def build_rename_plan(
     ok_flags: dict[str, bool],
     missing_indices: set[int],
     settings: RenameSettings,
+    text_overrides: dict[str, str] | None = None,
 ) -> list[RenamePlanEntry]:
     plan: list[RenamePlanEntry] = []
     next_index = 1
@@ -86,7 +84,8 @@ def build_rename_plan(
             continue
 
         next_index = _next_available_index(next_index, missing_indices)
-        new_filename = _build_filename(file_item, next_index, settings.digits, settings.keep_text)
+        text_value = None if text_overrides is None else text_overrides.get(file_item.original_filename, file_item.text_portion)
+        new_filename = _build_filename(file_item, next_index, settings.digits, settings.keep_text, text_value=text_value)
         plan.append(
             RenamePlanEntry(
                 source_path=file_item.path,
@@ -150,10 +149,6 @@ def undo_last_rename(folder: Path, progress_callback: Callable[[float], None] | 
         else:
             continue
         operations.append((source, target))
-        backup_source = _trim_backup_path(source)
-        backup_target = _trim_backup_path(target)
-        if backup_source.exists():
-            operations.append((backup_source, backup_target))
 
     total_steps = max(len(operations), 1)
     temp_records: list[tuple[Path, Path, Path]] = []
@@ -172,6 +167,7 @@ def undo_last_rename(folder: Path, progress_callback: Callable[[float], None] | 
             if target.exists():
                 raise FileExistsError(f"元に戻し先が既に存在します: {target.name}")
             temp_path.rename(target)
+            move_trim_backup_reference(_source, target)
             if progress_callback:
                 progress_callback((total_steps + step) / (total_steps * 2))
     except Exception:
@@ -180,6 +176,7 @@ def undo_last_rename(folder: Path, progress_callback: Callable[[float], None] | 
                 temp_path.rename(source)
             elif target.exists() and not source.exists():
                 target.rename(source)
+                move_trim_backup_reference(target, source)
         raise
 
     manifest_path.unlink(missing_ok=True)
@@ -192,12 +189,37 @@ def execute_rename_plan(
     progress_callback: Callable[[float], None] | None = None,
 ) -> None:
     operations = [entry for entry in plan if entry.source_path is not None]
+    source_paths = {
+        entry.source_path.resolve()
+        for entry in operations
+        if entry.source_path is not None
+    }
     total_steps = max(len(operations), 1)
     temp_records: list[tuple[Path, Path, RenamePlanEntry]] = []
 
     ng_folder = folder / settings.ng_folder_name
     if settings.move_ng_files:
         ng_folder.mkdir(exist_ok=True)
+
+    seen_destinations: set[Path] = set()
+    for entry in operations:
+        source_path = entry.source_path
+        assert source_path is not None
+        if entry.status == "NG":
+            destination = ng_folder / source_path.name if settings.move_ng_files else folder / source_path.name
+        else:
+            destination = folder / entry.new_filename
+
+        if destination in seen_destinations:
+            raise FileExistsError(f"同じ新ファイル名が複数あります: {destination.name}")
+        seen_destinations.add(destination)
+
+        if destination.exists() and destination.resolve() not in source_paths:
+            raise FileExistsError(
+                "処理対象外の既存ファイルと名前が衝突しています: "
+                f"{destination.name}\n\n"
+                "同じフォルダ内に、今回の処理対象に含まれていない同名ファイルが残っています。"
+            )
 
     try:
         for step, entry in enumerate(operations, start=1):
@@ -215,11 +237,12 @@ def execute_rename_plan(
             else:
                 destination = folder / entry.new_filename
 
-            backup_source = _trim_backup_path(original_path)
-            backup_destination = _trim_backup_path(destination)
-
             if destination.exists():
-                raise FileExistsError(f"Destination already exists: {destination.name}")
+                raise FileExistsError(
+                    "新しいファイル名の作成先がすでに埋まっています: "
+                    f"{destination.name}\n\n"
+                    "処理対象外のファイルが残っているか、前回の途中結果が残っている可能性があります。"
+                )
 
             if destination.parent != folder and not destination.parent.exists():
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -229,10 +252,7 @@ def execute_rename_plan(
             else:
                 temp_path.rename(destination)
 
-            if backup_source.exists():
-                if backup_destination.exists():
-                    raise FileExistsError(f"Trim backup destination already exists: {backup_destination.name}")
-                backup_source.rename(backup_destination)
+            move_trim_backup_reference(original_path, destination)
 
             if progress_callback:
                 progress_callback((total_steps + step) / (total_steps * 2))
@@ -246,8 +266,10 @@ def execute_rename_plan(
                 moved_path = ng_folder / original_path.name
                 if moved_path.exists():
                     shutil.move(str(moved_path), str(original_path))
+                    move_trim_backup_reference(moved_path, original_path)
             elif entry.status == "OK":
                 renamed_path = folder / entry.new_filename
                 if renamed_path.exists():
                     renamed_path.rename(original_path)
+                    move_trim_backup_reference(renamed_path, original_path)
         raise
