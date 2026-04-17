@@ -1,5 +1,6 @@
 customtkinter==5.2.2
 tkinterdnd2==0.4.3
 sounddevice==0.5.5
+numpy>=1.26.0
 Pillow>=10.0.0
 pyinstaller>=6.19.0
