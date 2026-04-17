@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import platform
 import threading
+import time
 import wave
 
 import numpy as np
@@ -20,6 +22,7 @@ class ScheduledChunk:
 class AudioPlayer:
     def __init__(self) -> None:
         self._current_path: Path | None = None
+        self._is_windows = platform.system() == "Windows"
         self._duration_ms: int | None = None
         self._stream = None
         self._audio_data: np.ndarray | None = None
@@ -30,6 +33,13 @@ class AudioPlayer:
         self._scheduled_chunks: list[ScheduledChunk] = []
         self._playing = False
         self._lock = threading.Lock()
+        self._started_at: float | None = None
+        if self._is_windows:
+            import winsound
+
+            self._winsound = winsound
+        else:
+            self._winsound = None
 
     @property
     def current_path(self) -> Path | None:
@@ -37,6 +47,15 @@ class AudioPlayer:
 
     def current_position_ms(self) -> int:
         with self._lock:
+            if self._is_windows:
+                duration_ms = self._duration_ms
+                started_at = self._started_at
+                if started_at is None:
+                    return 0
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                if duration_ms is not None:
+                    return max(0, min(elapsed_ms, duration_ms))
+                return max(0, elapsed_ms)
             if self._sample_rate <= 0:
                 return 0
             sample_rate = self._sample_rate
@@ -63,6 +82,19 @@ class AudioPlayer:
         return max(0, position_ms)
 
     def is_playing(self) -> bool:
+        if self._is_windows:
+            with self._lock:
+                if not self._playing or self._current_path is None:
+                    return False
+                duration_ms = self._duration_ms
+                started_at = self._started_at
+            if started_at is None or duration_ms is None:
+                return False
+            if int((time.perf_counter() - started_at) * 1000) >= duration_ms:
+                with self._lock:
+                    self._playing = False
+                return False
+            return True
         with self._lock:
             if not self._playing:
                 return False
@@ -75,6 +107,16 @@ class AudioPlayer:
         self._current_path = path
         self._duration_ms = self._read_duration_ms(path)
 
+        if self._is_windows and self._winsound is not None:
+            with self._lock:
+                self._started_at = time.perf_counter()
+                self._playing = True
+            self._winsound.PlaySound(
+                str(path),
+                self._winsound.SND_FILENAME | self._winsound.SND_ASYNC,
+            )
+            return
+
         audio_data, sample_rate, channels = self._load_wav(path)
         with self._lock:
             self._audio_data = audio_data
@@ -84,6 +126,7 @@ class AudioPlayer:
             self._audible_frame_position = 0
             self._scheduled_chunks = []
             self._playing = True
+            self._started_at = time.perf_counter()
 
         def callback(outdata, frames, time_info, status) -> None:
             if status:
@@ -124,6 +167,11 @@ class AudioPlayer:
         self._stream.start()
 
     def stop(self) -> None:
+        if self._is_windows and self._winsound is not None:
+            try:
+                self._winsound.PlaySound(None, self._winsound.SND_PURGE)
+            except Exception:
+                pass
         with self._lock:
             stream = self._stream
             self._stream = None
@@ -136,6 +184,7 @@ class AudioPlayer:
             self._scheduled_chunks = []
             self._current_path = None
             self._duration_ms = None
+            self._started_at = None
         if stream is not None:
             try:
                 stream.stop()
