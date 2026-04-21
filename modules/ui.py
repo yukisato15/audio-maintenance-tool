@@ -42,6 +42,7 @@ TABLE_COLUMN_WIDTHS = {
     6: 90,
     7: 220,
 }
+TABLE_WIDTH = sum(TABLE_COLUMN_WIDTHS.values())
 
 
 @dataclass(slots=True)
@@ -113,22 +114,23 @@ class FileRow(ctk.CTkFrame):
         self._configure_columns()
 
         drag_handle = ctk.CTkLabel(self, text="↕", width=20, anchor="center")
-        drag_handle.grid(row=0, column=0, padx=(10, 6), pady=5, sticky="w")
+        drag_handle.grid(row=0, column=0, padx=(10, 6), pady=5)
         drag_handle.bind("<ButtonPress-1>", lambda _event: self._on_drag_start(self.file_item.original_filename))
         drag_handle.bind("<ButtonRelease-1>", lambda event: self._on_drag_end(self.file_item.original_filename, event.y_root))
 
         ctk.CTkCheckBox(self, text="", width=28, variable=self.ok_var, command=self._toggle_ok).grid(
-            row=0, column=1, padx=(10, 6), pady=5, sticky="w"
+            row=0, column=1, padx=(10, 6), pady=5
         )
         ctk.CTkCheckBox(self, text="", width=28, variable=self.ng_var, command=self._toggle_ng).grid(
-            row=0, column=2, padx=(10, 6), pady=5, sticky="w"
+            row=0, column=2, padx=(10, 6), pady=5
         )
 
         self.play_button = ctk.CTkButton(self, text="▶", width=42, command=lambda: self._on_play_toggle(self.file_item.path))
-        self.play_button.grid(row=0, column=3, padx=(8, 6), pady=5, sticky="w")
+        self.play_button.grid(row=0, column=3, padx=(8, 6), pady=5)
 
-        action_frame = ctk.CTkFrame(self, fg_color="transparent")
-        action_frame.grid(row=0, column=4, padx=(2, 8), pady=5, sticky="w")
+        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 10)
+        action_frame.grid(row=0, column=4, padx=(2, 8), pady=5)
+        action_frame.grid_propagate(False)
         ctk.CTkButton(action_frame, text="余白", width=56, command=lambda: self._on_trim(self.file_item.path)).grid(row=0, column=0, padx=(0, 4), sticky="w")
         ctk.CTkButton(action_frame, text="分割", width=56, command=lambda: self._on_split(self.file_item)).grid(row=0, column=1, padx=(0, 4), sticky="w")
         self.restore_trim_button = ctk.CTkButton(
@@ -160,13 +162,14 @@ class FileRow(ctk.CTkFrame):
             text=f"{self._display_filename(self.text_var.get())}{suffix_text}",
             anchor="w",
             text_color=badge_color,
+            width=TABLE_COLUMN_WIDTHS[5] - 20,
         )
-        self.filename_label.grid(row=0, column=5, padx=(10, 10), pady=5, sticky="ew")
-        ctk.CTkLabel(self, text=str(self.file_item.original_index), anchor="center").grid(
+        self.filename_label.grid(row=0, column=5, padx=(10, 10), pady=5, sticky="w")
+        ctk.CTkLabel(self, text=str(self.file_item.original_index), anchor="center", width=TABLE_COLUMN_WIDTHS[6] - 16).grid(
             row=0, column=6, padx=8, pady=5, sticky="nsew"
         )
-        self.text_entry = ctk.CTkEntry(self, textvariable=self.text_var)
-        self.text_entry.grid(row=0, column=7, padx=(10, 12), pady=5, sticky="ew")
+        self.text_entry = ctk.CTkEntry(self, textvariable=self.text_var, width=TABLE_COLUMN_WIDTHS[7] - 22)
+        self.text_entry.grid(row=0, column=7, padx=(10, 12), pady=5)
         self.text_entry.bind("<FocusOut>", self._commit_text)
         self.text_entry.bind("<Return>", self._commit_text)
         if self.split_required and not text_value:
@@ -208,7 +211,7 @@ class FileRow(ctk.CTkFrame):
 
     def _configure_columns(self) -> None:
         for column, minsize in TABLE_COLUMN_WIDTHS.items():
-            self.grid_columnconfigure(column, minsize=minsize, weight=1 if column == 5 else 0)
+            self.grid_columnconfigure(column, minsize=minsize, weight=0)
 
     def set_playing(self, is_playing: bool) -> None:
         if is_playing:
@@ -344,8 +347,9 @@ class BatchRenameApp(ctk.CTk):
         ctk.CTkButton(toolbar, text="欠番候補を反映", width=140, command=self.apply_missing_suggestions).grid(row=0, column=2, padx=6, sticky="w")
         ctk.CTkButton(toolbar, text="一覧をクリア", width=120, fg_color=("#d5d5d5", "#4a4a4a"), hover_color=("#c8c8c8", "#5a5a5a"), command=self.clear_folders).grid(row=0, column=3, padx=6, sticky="w")
 
-        header = ctk.CTkFrame(self.table_frame)
+        header = ctk.CTkFrame(self.table_frame, width=TABLE_WIDTH)
         header.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="ew")
+        header.grid_propagate(False)
         self._configure_table_columns(header)
         headers = {
             0: ("順", "center", (0, 0)),
@@ -359,7 +363,9 @@ class BatchRenameApp(ctk.CTk):
         }
         for column, (text, anchor, padx) in headers.items():
             sticky = "nsew" if anchor == "center" else "w"
-            ctk.CTkLabel(header, text=text, anchor=anchor).grid(row=0, column=column, padx=padx, pady=10, sticky=sticky)
+            horizontal_pad = padx[0] + padx[1]
+            label_width = max(TABLE_COLUMN_WIDTHS[column] - horizontal_pad, 20)
+            ctk.CTkLabel(header, text=text, anchor=anchor, width=label_width).grid(row=0, column=column, padx=padx, pady=10, sticky=sticky)
 
         self.file_scroll = ctk.CTkScrollableFrame(self.table_frame)
         self.file_scroll.grid(row=2, column=0, padx=12, pady=(4, 6), sticky="nsew")
@@ -551,7 +557,7 @@ class BatchRenameApp(ctk.CTk):
 
     def _configure_table_columns(self, frame: ctk.CTkFrame) -> None:
         for column, minsize in TABLE_COLUMN_WIDTHS.items():
-            frame.grid_columnconfigure(column, minsize=minsize, weight=1 if column == 5 else 0)
+            frame.grid_columnconfigure(column, minsize=minsize, weight=0)
 
     def _setup_drop_targets(self) -> None:
         for widget in (self.folder_list_frame, self.folder_listbox):
