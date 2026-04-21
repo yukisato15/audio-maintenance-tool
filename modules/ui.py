@@ -33,14 +33,14 @@ ctk.set_default_color_theme("blue")
 DISPLAY_PREFIX_PATTERN = re.compile(r"^(\d+)")
 
 TABLE_COLUMN_WIDTHS = {
-    0: 52,
-    1: 72,
-    2: 72,
-    3: 72,
-    4: 196,
-    5: 440,
-    6: 90,
-    7: 220,
+    0: 50,
+    1: 64,
+    2: 64,
+    3: 70,
+    4: 180,
+    5: 380,
+    6: 70,
+    7: 320,
 }
 TABLE_WIDTH = sum(TABLE_COLUMN_WIDTHS.values())
 TABLE_ROW_HEIGHT = 54
@@ -54,6 +54,55 @@ SECONDARY_BUTTON_STYLE = {
     "hover_color": ("#475569", "#64748b"),
     "text_color": ("white", "white"),
 }
+
+
+class TableScrollArea(ctk.CTkFrame):
+    """Header and rows share the same horizontal scroll position."""
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        bg_color = "#f2f2f2" if ctk.get_appearance_mode() == "Light" else "#2b2b2b"
+        self.header_canvas = tk.Canvas(self, height=TABLE_HEADER_HEIGHT, bd=0, highlightthickness=0, background=bg_color)
+        self.header_canvas.grid(row=0, column=0, sticky="ew")
+        self.header_frame = ctk.CTkFrame(self.header_canvas, width=TABLE_WIDTH, height=TABLE_HEADER_HEIGHT)
+        self.header_window = self.header_canvas.create_window(0, 0, anchor="nw", window=self.header_frame)
+
+        self.body_canvas = tk.Canvas(self, bd=0, highlightthickness=0, background=bg_color)
+        self.body_canvas.grid(row=1, column=0, sticky="nsew")
+        self.content = ctk.CTkFrame(self.body_canvas, fg_color="transparent", width=TABLE_WIDTH)
+        self.content_window = self.body_canvas.create_window(0, 0, anchor="nw", window=self.content)
+
+        vertical = ctk.CTkScrollbar(self, orientation="vertical", command=self.body_canvas.yview)
+        vertical.grid(row=1, column=1, sticky="ns")
+        horizontal = ctk.CTkScrollbar(self, orientation="horizontal", command=self._xview)
+        horizontal.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+
+        self.body_canvas.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        self.header_frame.bind("<Configure>", self._update_header_scrollregion)
+        self.content.bind("<Configure>", self._update_body_scrollregion)
+        self.body_canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.content.bind("<MouseWheel>", self._on_mousewheel)
+
+    def _xview(self, *args) -> None:
+        self.body_canvas.xview(*args)
+        self.header_canvas.xview(*args)
+
+    def _update_header_scrollregion(self, _event=None) -> None:
+        self.header_canvas.configure(scrollregion=(0, 0, TABLE_WIDTH, TABLE_HEADER_HEIGHT))
+
+    def _update_body_scrollregion(self, _event=None) -> None:
+        height = max(self.content.winfo_reqheight(), self.body_canvas.winfo_height())
+        self.body_canvas.configure(scrollregion=(0, 0, TABLE_WIDTH, height))
+
+    def _on_mousewheel(self, event: tk.Event) -> str:
+        if event.state & 0x0001:
+            self._xview("scroll", -1 * int(event.delta / 120), "units")
+        else:
+            self.body_canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+        return "break"
 
 
 @dataclass(slots=True)
@@ -354,10 +403,10 @@ class BatchRenameApp(ctk.CTk):
         ctk.CTkButton(toolbar, text="欠番候補を反映", width=140, command=self.apply_missing_suggestions).grid(row=0, column=2, padx=6, sticky="w")
         ctk.CTkButton(toolbar, text="一覧をクリア", width=120, **SECONDARY_BUTTON_STYLE, command=self.clear_folders).grid(row=0, column=3, padx=6, sticky="w")
 
-        header = ctk.CTkFrame(self.table_frame, width=TABLE_WIDTH, height=TABLE_HEADER_HEIGHT)
-        header.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="w")
-        header.grid_propagate(False)
-        header.pack_propagate(False)
+        self.table_scroll_area = TableScrollArea(self.table_frame)
+        self.table_scroll_area.grid(row=1, column=0, rowspan=2, padx=12, pady=(0, 6), sticky="nsew")
+
+        header = self.table_scroll_area.header_frame
         headers = {
             0: ("順", "center", (0, 0)),
             1: ("OK", "center", (0, 0)),
@@ -376,8 +425,7 @@ class BatchRenameApp(ctk.CTk):
                 y=0,
             )
 
-        self.file_scroll = ctk.CTkScrollableFrame(self.table_frame)
-        self.file_scroll.grid(row=2, column=0, padx=12, pady=(4, 6), sticky="nsew")
+        self.file_scroll = self.table_scroll_area.content
         self.file_scroll.grid_columnconfigure(0, minsize=TABLE_WIDTH, weight=0)
 
         batch_row = ctk.CTkFrame(self.table_frame, fg_color="transparent")
