@@ -208,7 +208,7 @@ class FileRow(ctk.CTkFrame):
 
     def _configure_columns(self) -> None:
         for column, minsize in TABLE_COLUMN_WIDTHS.items():
-            self.grid_columnconfigure(column, minsize=minsize, weight=1 if column in (5, 7) else 0)
+            self.grid_columnconfigure(column, minsize=minsize, weight=1 if column == 5 else 0)
 
     def set_playing(self, is_playing: bool) -> None:
         if is_playing:
@@ -551,7 +551,7 @@ class BatchRenameApp(ctk.CTk):
 
     def _configure_table_columns(self, frame: ctk.CTkFrame) -> None:
         for column, minsize in TABLE_COLUMN_WIDTHS.items():
-            frame.grid_columnconfigure(column, minsize=minsize, weight=1 if column in (5, 7) else 0)
+            frame.grid_columnconfigure(column, minsize=minsize, weight=1 if column == 5 else 0)
 
     def _setup_drop_targets(self) -> None:
         for widget in (self.folder_list_frame, self.folder_listbox):
