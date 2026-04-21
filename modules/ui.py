@@ -43,6 +43,17 @@ TABLE_COLUMN_WIDTHS = {
     7: 220,
 }
 TABLE_WIDTH = sum(TABLE_COLUMN_WIDTHS.values())
+TABLE_ROW_HEIGHT = 54
+TABLE_HEADER_HEIGHT = 44
+TABLE_COLUMN_X = {
+    column: sum(TABLE_COLUMN_WIDTHS[index] for index in range(column))
+    for column in TABLE_COLUMN_WIDTHS
+}
+SECONDARY_BUTTON_STYLE = {
+    "fg_color": ("#64748b", "#475569"),
+    "hover_color": ("#475569", "#64748b"),
+    "text_color": ("white", "white"),
+}
 
 
 @dataclass(slots=True)
@@ -96,7 +107,7 @@ class FileRow(ctk.CTkFrame):
             row_color = "transparent"
             badge_color = None
 
-        super().__init__(master, fg_color=row_color)
+        super().__init__(master, fg_color=row_color, width=TABLE_WIDTH, height=TABLE_ROW_HEIGHT)
         self.file_item = file_item
         self._on_status_change = on_status_change
         self._on_play_toggle = on_play_toggle
@@ -111,25 +122,26 @@ class FileRow(ctk.CTkFrame):
         self.text_var = tk.StringVar(value=text_value)
         self.split_required = split_required
 
-        self._configure_columns()
+        self.grid_propagate(False)
+        self.pack_propagate(False)
 
-        drag_handle = ctk.CTkLabel(self, text="↕", width=20, anchor="center")
-        drag_handle.grid(row=0, column=0, padx=(10, 6), pady=5)
+        drag_handle = ctk.CTkLabel(self, text="↕", anchor="center")
+        drag_handle.place(x=TABLE_COLUMN_X[0] + 8, y=7, width=TABLE_COLUMN_WIDTHS[0] - 16, height=40)
         drag_handle.bind("<ButtonPress-1>", lambda _event: self._on_drag_start(self.file_item.original_filename))
         drag_handle.bind("<ButtonRelease-1>", lambda event: self._on_drag_end(self.file_item.original_filename, event.y_root))
 
-        ctk.CTkCheckBox(self, text="", width=28, variable=self.ok_var, command=self._toggle_ok).grid(
-            row=0, column=1, padx=(10, 6), pady=5
+        ctk.CTkCheckBox(self, text="", width=28, variable=self.ok_var, command=self._toggle_ok).place(
+            x=TABLE_COLUMN_X[1] + 20, y=11, width=32, height=32
         )
-        ctk.CTkCheckBox(self, text="", width=28, variable=self.ng_var, command=self._toggle_ng).grid(
-            row=0, column=2, padx=(10, 6), pady=5
+        ctk.CTkCheckBox(self, text="", width=28, variable=self.ng_var, command=self._toggle_ng).place(
+            x=TABLE_COLUMN_X[2] + 20, y=11, width=32, height=32
         )
 
         self.play_button = ctk.CTkButton(self, text="▶", width=42, command=lambda: self._on_play_toggle(self.file_item.path))
-        self.play_button.grid(row=0, column=3, padx=(8, 6), pady=5)
+        self.play_button.place(x=TABLE_COLUMN_X[3] + 8, y=8, width=56, height=38)
 
-        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 10)
-        action_frame.grid(row=0, column=4, padx=(2, 8), pady=5)
+        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 10, height=40)
+        action_frame.place(x=TABLE_COLUMN_X[4] + 4, y=7, width=TABLE_COLUMN_WIDTHS[4] - 8, height=40)
         action_frame.grid_propagate(False)
         ctk.CTkButton(action_frame, text="余白", width=56, command=lambda: self._on_trim(self.file_item.path)).grid(row=0, column=0, padx=(0, 4), sticky="w")
         ctk.CTkButton(action_frame, text="分割", width=56, command=lambda: self._on_split(self.file_item)).grid(row=0, column=1, padx=(0, 4), sticky="w")
@@ -137,8 +149,7 @@ class FileRow(ctk.CTkFrame):
             action_frame,
             text="戻す",
             width=56,
-            fg_color=("#d5d5d5", "#4a4a4a"),
-            hover_color=("#c8c8c8", "#5a5a5a"),
+            **SECONDARY_BUTTON_STYLE,
             command=lambda: self._on_restore_trim(self.file_item.path),
         )
         self.restore_trim_button.grid(row=0, column=2, sticky="w")
@@ -164,12 +175,12 @@ class FileRow(ctk.CTkFrame):
             text_color=badge_color,
             width=TABLE_COLUMN_WIDTHS[5] - 20,
         )
-        self.filename_label.grid(row=0, column=5, padx=(10, 10), pady=5, sticky="w")
-        ctk.CTkLabel(self, text=str(self.file_item.original_index), anchor="center", width=TABLE_COLUMN_WIDTHS[6] - 16).grid(
-            row=0, column=6, padx=8, pady=5, sticky="nsew"
+        self.filename_label.place(x=TABLE_COLUMN_X[5] + 10, y=7, width=TABLE_COLUMN_WIDTHS[5] - 20, height=40)
+        ctk.CTkLabel(self, text=str(self.file_item.original_index), anchor="center", width=TABLE_COLUMN_WIDTHS[6] - 16).place(
+            x=TABLE_COLUMN_X[6] + 8, y=7, width=TABLE_COLUMN_WIDTHS[6] - 16, height=40
         )
         self.text_entry = ctk.CTkEntry(self, textvariable=self.text_var, width=TABLE_COLUMN_WIDTHS[7] - 22)
-        self.text_entry.grid(row=0, column=7, padx=(10, 12), pady=5)
+        self.text_entry.place(x=TABLE_COLUMN_X[7] + 10, y=8, width=TABLE_COLUMN_WIDTHS[7] - 22, height=38)
         self.text_entry.bind("<FocusOut>", self._commit_text)
         self.text_entry.bind("<Return>", self._commit_text)
         if self.split_required and not text_value:
@@ -208,10 +219,6 @@ class FileRow(ctk.CTkFrame):
         if clean_text:
             return f"{prefix}{clean_text}{self.file_item.path.suffix.lower()}"
         return f"{prefix}{self.file_item.path.suffix.lower()}"
-
-    def _configure_columns(self) -> None:
-        for column, minsize in TABLE_COLUMN_WIDTHS.items():
-            self.grid_columnconfigure(column, minsize=minsize, weight=0)
 
     def set_playing(self, is_playing: bool) -> None:
         if is_playing:
@@ -292,8 +299,7 @@ class BatchRenameApp(ctk.CTk):
             text="前回リネーム前に戻す",
             width=150,
             height=30,
-            fg_color=("#d5d5d5", "#4a4a4a"),
-            hover_color=("#c8c8c8", "#5a5a5a"),
+            **SECONDARY_BUTTON_STYLE,
             command=self.undo_current_folder,
         ).grid(row=0, column=2, padx=(20, 8), sticky="w")
         ctk.CTkLabel(control_row, textvariable=self.folder_info_var, anchor="e").grid(row=0, column=4, padx=(16, 0), sticky="ew")
@@ -345,12 +351,12 @@ class BatchRenameApp(ctk.CTk):
         )
         self.mode_segment.grid(row=0, column=1, padx=(0, 8), sticky="w")
         ctk.CTkButton(toolbar, text="欠番候補を反映", width=140, command=self.apply_missing_suggestions).grid(row=0, column=2, padx=6, sticky="w")
-        ctk.CTkButton(toolbar, text="一覧をクリア", width=120, fg_color=("#d5d5d5", "#4a4a4a"), hover_color=("#c8c8c8", "#5a5a5a"), command=self.clear_folders).grid(row=0, column=3, padx=6, sticky="w")
+        ctk.CTkButton(toolbar, text="一覧をクリア", width=120, **SECONDARY_BUTTON_STYLE, command=self.clear_folders).grid(row=0, column=3, padx=6, sticky="w")
 
-        header = ctk.CTkFrame(self.table_frame, width=TABLE_WIDTH)
-        header.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="ew")
+        header = ctk.CTkFrame(self.table_frame, width=TABLE_WIDTH, height=TABLE_HEADER_HEIGHT)
+        header.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="w")
         header.grid_propagate(False)
-        self._configure_table_columns(header)
+        header.pack_propagate(False)
         headers = {
             0: ("順", "center", (0, 0)),
             1: ("OK", "center", (0, 0)),
@@ -362,14 +368,18 @@ class BatchRenameApp(ctk.CTk):
             7: ("テキスト部分", "w", (10, 12)),
         }
         for column, (text, anchor, padx) in headers.items():
-            sticky = "nsew" if anchor == "center" else "w"
             horizontal_pad = padx[0] + padx[1]
             label_width = max(TABLE_COLUMN_WIDTHS[column] - horizontal_pad, 20)
-            ctk.CTkLabel(header, text=text, anchor=anchor, width=label_width).grid(row=0, column=column, padx=padx, pady=10, sticky=sticky)
+            ctk.CTkLabel(header, text=text, anchor=anchor, width=label_width).place(
+                x=TABLE_COLUMN_X[column] + padx[0],
+                y=0,
+                width=label_width,
+                height=TABLE_HEADER_HEIGHT,
+            )
 
         self.file_scroll = ctk.CTkScrollableFrame(self.table_frame)
         self.file_scroll.grid(row=2, column=0, padx=12, pady=(4, 6), sticky="nsew")
-        self.file_scroll.grid_columnconfigure(0, weight=1)
+        self.file_scroll.grid_columnconfigure(0, minsize=TABLE_WIDTH, weight=0)
 
         batch_row = ctk.CTkFrame(self.table_frame, fg_color="transparent")
         batch_row.grid(row=3, column=0, padx=12, pady=(0, 12), sticky="ew")
@@ -849,7 +859,7 @@ class BatchRenameApp(ctk.CTk):
                 self.start_row_drag,
                 self.finish_row_drag,
             )
-            row.grid(row=row_number - 1, column=0, padx=4, pady=1, sticky="ew")
+            row.grid(row=row_number - 1, column=0, padx=4, pady=1, sticky="w")
             self.file_rows.append(row)
 
     def _sync_play_buttons(self) -> None:
