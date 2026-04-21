@@ -125,23 +125,23 @@ class FileRow(ctk.CTkFrame):
         self.grid_propagate(False)
         self.pack_propagate(False)
 
-        drag_handle = ctk.CTkLabel(self, text="↕", anchor="center")
-        drag_handle.place(x=TABLE_COLUMN_X[0] + 8, y=7, width=TABLE_COLUMN_WIDTHS[0] - 16, height=40)
+        drag_handle = ctk.CTkLabel(self, text="↕", anchor="center", width=TABLE_COLUMN_WIDTHS[0] - 16, height=40)
+        drag_handle.place(x=TABLE_COLUMN_X[0] + 8, y=7)
         drag_handle.bind("<ButtonPress-1>", lambda _event: self._on_drag_start(self.file_item.original_filename))
         drag_handle.bind("<ButtonRelease-1>", lambda event: self._on_drag_end(self.file_item.original_filename, event.y_root))
 
-        ctk.CTkCheckBox(self, text="", width=28, variable=self.ok_var, command=self._toggle_ok).place(
-            x=TABLE_COLUMN_X[1] + 20, y=11, width=32, height=32
+        ctk.CTkCheckBox(self, text="", width=32, height=32, variable=self.ok_var, command=self._toggle_ok).place(
+            x=TABLE_COLUMN_X[1] + 20, y=11
         )
-        ctk.CTkCheckBox(self, text="", width=28, variable=self.ng_var, command=self._toggle_ng).place(
-            x=TABLE_COLUMN_X[2] + 20, y=11, width=32, height=32
+        ctk.CTkCheckBox(self, text="", width=32, height=32, variable=self.ng_var, command=self._toggle_ng).place(
+            x=TABLE_COLUMN_X[2] + 20, y=11
         )
 
-        self.play_button = ctk.CTkButton(self, text="▶", width=42, command=lambda: self._on_play_toggle(self.file_item.path))
-        self.play_button.place(x=TABLE_COLUMN_X[3] + 8, y=8, width=56, height=38)
+        self.play_button = ctk.CTkButton(self, text="▶", width=56, height=38, command=lambda: self._on_play_toggle(self.file_item.path))
+        self.play_button.place(x=TABLE_COLUMN_X[3] + 8, y=8)
 
-        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 10, height=40)
-        action_frame.place(x=TABLE_COLUMN_X[4] + 4, y=7, width=TABLE_COLUMN_WIDTHS[4] - 8, height=40)
+        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 8, height=40)
+        action_frame.place(x=TABLE_COLUMN_X[4] + 4, y=7)
         action_frame.grid_propagate(False)
         ctk.CTkButton(action_frame, text="余白", width=56, command=lambda: self._on_trim(self.file_item.path)).grid(row=0, column=0, padx=(0, 4), sticky="w")
         ctk.CTkButton(action_frame, text="分割", width=56, command=lambda: self._on_split(self.file_item)).grid(row=0, column=1, padx=(0, 4), sticky="w")
@@ -174,13 +174,14 @@ class FileRow(ctk.CTkFrame):
             anchor="w",
             text_color=badge_color,
             width=TABLE_COLUMN_WIDTHS[5] - 20,
+            height=40,
         )
-        self.filename_label.place(x=TABLE_COLUMN_X[5] + 10, y=7, width=TABLE_COLUMN_WIDTHS[5] - 20, height=40)
-        ctk.CTkLabel(self, text=str(self.file_item.original_index), anchor="center", width=TABLE_COLUMN_WIDTHS[6] - 16).place(
-            x=TABLE_COLUMN_X[6] + 8, y=7, width=TABLE_COLUMN_WIDTHS[6] - 16, height=40
+        self.filename_label.place(x=TABLE_COLUMN_X[5] + 10, y=7)
+        ctk.CTkLabel(self, text=str(self.file_item.original_index), anchor="center", width=TABLE_COLUMN_WIDTHS[6] - 16, height=40).place(
+            x=TABLE_COLUMN_X[6] + 8, y=7
         )
-        self.text_entry = ctk.CTkEntry(self, textvariable=self.text_var, width=TABLE_COLUMN_WIDTHS[7] - 22)
-        self.text_entry.place(x=TABLE_COLUMN_X[7] + 10, y=8, width=TABLE_COLUMN_WIDTHS[7] - 22, height=38)
+        self.text_entry = ctk.CTkEntry(self, textvariable=self.text_var, width=TABLE_COLUMN_WIDTHS[7] - 22, height=38)
+        self.text_entry.place(x=TABLE_COLUMN_X[7] + 10, y=8)
         self.text_entry.bind("<FocusOut>", self._commit_text)
         self.text_entry.bind("<Return>", self._commit_text)
         if self.split_required and not text_value:
@@ -370,11 +371,9 @@ class BatchRenameApp(ctk.CTk):
         for column, (text, anchor, padx) in headers.items():
             horizontal_pad = padx[0] + padx[1]
             label_width = max(TABLE_COLUMN_WIDTHS[column] - horizontal_pad, 20)
-            ctk.CTkLabel(header, text=text, anchor=anchor, width=label_width).place(
+            ctk.CTkLabel(header, text=text, anchor=anchor, width=label_width, height=TABLE_HEADER_HEIGHT).place(
                 x=TABLE_COLUMN_X[column] + padx[0],
                 y=0,
-                width=label_width,
-                height=TABLE_HEADER_HEIGHT,
             )
 
         self.file_scroll = ctk.CTkScrollableFrame(self.table_frame)
