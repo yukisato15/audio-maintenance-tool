@@ -11,6 +11,8 @@ from modules.file_parser import ParsedAudioFile
 
 
 UNDO_MANIFEST_NAME = ".rename_undo.json"
+MANAGEMENT_FOLDER_NAME = "_管理ファイル"
+MANAGED_FILE_SUFFIXES = {".csv", ".txt", ".log", ".json"}
 
 
 @dataclass(slots=True)
@@ -30,6 +32,53 @@ class RenameSettings:
     move_ng_files: bool
     export_csv: bool
     ng_folder_name: str = "_NG"
+    management_folder_name: str = MANAGEMENT_FOLDER_NAME
+
+
+def management_folder_path(folder: Path, settings: RenameSettings | None = None) -> Path:
+    folder_name = MANAGEMENT_FOLDER_NAME if settings is None else settings.management_folder_name
+    return folder / folder_name
+
+
+def undo_manifest_path(folder: Path, settings: RenameSettings | None = None) -> Path:
+    return management_folder_path(folder, settings) / UNDO_MANIFEST_NAME
+
+
+def _legacy_undo_manifest_path(folder: Path) -> Path:
+    return folder / UNDO_MANIFEST_NAME
+
+
+def _unique_destination(path: Path) -> Path:
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    for index in range(1, 10000):
+        candidate = path.with_name(f"{stem}_{index:02d}{suffix}")
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"移動先ファイル名を作成できません: {path.name}")
+
+
+def organize_management_files(folder: Path, settings: RenameSettings) -> None:
+    management_folder = management_folder_path(folder, settings)
+    management_folder.mkdir(exist_ok=True)
+
+    legacy_ng_folder = folder / settings.ng_folder_name
+    managed_ng_folder = management_folder / settings.ng_folder_name
+    if legacy_ng_folder.exists() and legacy_ng_folder != managed_ng_folder:
+        if managed_ng_folder.exists():
+            for child in legacy_ng_folder.iterdir():
+                shutil.move(str(child), str(_unique_destination(managed_ng_folder / child.name)))
+            legacy_ng_folder.rmdir()
+        else:
+            shutil.move(str(legacy_ng_folder), str(managed_ng_folder))
+
+    for child in list(folder.iterdir()):
+        if child == management_folder:
+            continue
+        if child.is_file() and not child.name.startswith(".") and child.suffix.lower() in MANAGED_FILE_SUFFIXES:
+            shutil.move(str(child), str(_unique_destination(management_folder / child.name)))
 
 
 def _build_filename(file_item: ParsedAudioFile, new_index: int, digits: int, keep_text: bool, text_value: str | None = None) -> str:
@@ -109,7 +158,8 @@ def build_rename_plan(
 
 
 def write_undo_manifest(plan: list[RenamePlanEntry], folder: Path, settings: RenameSettings) -> Path:
-    manifest_path = folder / UNDO_MANIFEST_NAME
+    management_folder_path(folder, settings).mkdir(exist_ok=True)
+    manifest_path = undo_manifest_path(folder, settings)
     payload = {
         "settings": asdict(settings),
         "entries": [
@@ -126,11 +176,13 @@ def write_undo_manifest(plan: list[RenamePlanEntry], folder: Path, settings: Ren
 
 
 def has_undo_manifest(folder: Path) -> bool:
-    return (folder / UNDO_MANIFEST_NAME).exists()
+    return undo_manifest_path(folder).exists() or _legacy_undo_manifest_path(folder).exists()
 
 
 def undo_last_rename(folder: Path, progress_callback: Callable[[float], None] | None = None) -> None:
-    manifest_path = folder / UNDO_MANIFEST_NAME
+    manifest_path = undo_manifest_path(folder)
+    if not manifest_path.exists():
+        manifest_path = _legacy_undo_manifest_path(folder)
     if not manifest_path.exists():
         raise FileNotFoundError("元に戻せる履歴がありません。")
 
@@ -144,7 +196,9 @@ def undo_last_rename(folder: Path, progress_callback: Callable[[float], None] | 
             source = folder / entry["new_filename"]
             target = folder / entry["original_filename"]
         elif status == "NG" and settings.move_ng_files:
-            source = folder / settings.ng_folder_name / entry["original_filename"]
+            source = management_folder_path(folder, settings) / settings.ng_folder_name / entry["original_filename"]
+            if not source.exists():
+                source = folder / settings.ng_folder_name / entry["original_filename"]
             target = folder / entry["original_filename"]
         else:
             continue
@@ -197,7 +251,9 @@ def execute_rename_plan(
     total_steps = max(len(operations), 1)
     temp_records: list[tuple[Path, Path, RenamePlanEntry]] = []
 
-    ng_folder = folder / settings.ng_folder_name
+    management_folder = management_folder_path(folder, settings)
+    management_folder.mkdir(exist_ok=True)
+    ng_folder = management_folder / settings.ng_folder_name
     if settings.move_ng_files:
         ng_folder.mkdir(exist_ok=True)
 

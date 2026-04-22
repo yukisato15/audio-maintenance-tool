@@ -16,11 +16,14 @@ from modules.audio_player import AudioPlayer
 from modules.csv_logger import write_rename_log
 from modules.file_parser import ParseResult, ParsedAudioFile, parse_audio_folder
 from modules.renamer import (
+    MANAGEMENT_FOLDER_NAME,
     RenamePlanEntry,
     RenameSettings,
     build_rename_plan,
     execute_rename_plan,
     has_undo_manifest,
+    management_folder_path,
+    organize_management_files,
     undo_last_rename,
     write_undo_manifest,
 )
@@ -42,9 +45,9 @@ TABLE_COLUMN_WIDTHS = {
     2: 62,
     3: 66,
     4: 176,
-    5: 330,
+    5: 380,
     6: 60,
-    7: 320,
+    7: 380,
 }
 TABLE_WIDTH = sum(TABLE_COLUMN_WIDTHS.values())
 TABLE_ROW_HEIGHT = 54
@@ -61,6 +64,18 @@ SECONDARY_BUTTON_STYLE = {
 ROW_CONTROL_Y = 8
 ROW_BUTTON_HEIGHT = 38
 ROW_CHECKBOX_SIZE = 32
+
+
+def file_row_style(file_item: ParsedAudioFile, is_ng: bool, reviewed: bool, trim_modified: bool) -> tuple[str | tuple[str, str], str | None]:
+    if is_ng:
+        return ("#fde8e8", "#442727"), "#dc2626"
+    if not reviewed:
+        return ("#fff7d6", "#3f3721"), "#ca8a04"
+    if trim_modified:
+        return ("#e8f1ff", "#23344c"), "#2563eb"
+    if file_item.duplicate_index:
+        return ("#ffedd5", "#45311f"), "#d97706"
+    return "transparent", None
 
 
 @dataclass(slots=True)
@@ -98,24 +113,12 @@ class FileRow(ctk.CTkFrame):
         on_drag_end,
     ) -> None:
         is_ng = reviewed and not initial_ok
-        if is_ng:
-            row_color = ("#fde8e8", "#442727")
-            badge_color = "#dc2626"
-        elif not reviewed:
-            row_color = ("#fff7d6", "#3f3721")
-            badge_color = "#ca8a04"
-        elif trim_modified:
-            row_color = ("#e8f1ff", "#23344c")
-            badge_color = "#2563eb"
-        elif file_item.duplicate_index:
-            row_color = ("#ffedd5", "#45311f")
-            badge_color = "#d97706"
-        else:
-            row_color = "transparent"
-            badge_color = None
+        row_color, badge_color = file_row_style(file_item, is_ng, reviewed, trim_modified)
 
         super().__init__(master, fg_color=row_color, width=TABLE_WIDTH, height=TABLE_ROW_HEIGHT)
         self.file_item = file_item
+        self.trim_modified = trim_modified
+        self.reviewed = reviewed
         self._on_status_change = on_status_change
         self._on_play_toggle = on_play_toggle
         self._on_trim = on_trim
@@ -219,6 +222,15 @@ class FileRow(ctk.CTkFrame):
         suffix_text = "" if not status_suffixes else "  [" + "] [".join(status_suffixes) + "]"
         return f"{self._display_filename(text_value)}{suffix_text}"
 
+    def _refresh_visual_state(self) -> None:
+        self.reviewed = self.ok_var.get() or self.ng_var.get()
+        row_color, badge_color = file_row_style(self.file_item, self.ng_var.get(), self.reviewed, self.trim_modified)
+        self.configure(fg_color=row_color)
+        self.filename_label.configure(
+            text=self._filename_label_text(self.text_var.get()),
+            text_color=badge_color,
+        )
+
     def _display_filename(self, text_value: str) -> str:
         prefix_match = DISPLAY_PREFIX_PATTERN.match(self.file_item.path.stem)
         if prefix_match is None:
@@ -240,7 +252,7 @@ class FileRow(ctk.CTkFrame):
             self.ng_var.set(False)
         elif not self.ng_var.get():
             self.ok_var.set(True)
-        self.filename_label.configure(text=self._filename_label_text(self.text_var.get()))
+        self._refresh_visual_state()
         self._on_status_change(self.file_item.original_filename, self.ok_var.get())
 
     def _toggle_ng(self) -> None:
@@ -248,7 +260,7 @@ class FileRow(ctk.CTkFrame):
             self.ok_var.set(False)
         elif not self.ok_var.get():
             self.ng_var.set(True)
-        self.filename_label.configure(text=self._filename_label_text(self.text_var.get()))
+        self._refresh_visual_state()
         self._on_status_change(self.file_item.original_filename, self.ok_var.get())
 
 
@@ -461,7 +473,7 @@ class BatchRenameApp(ctk.CTk):
             row=1, column=0, padx=12, pady=(0, 12), sticky="ew"
         )
         ctk.CTkCheckBox(settings_tab, text="番号の後ろの元テキストを残す", variable=self.keep_text_var).grid(row=2, column=0, padx=12, pady=6, sticky="w")
-        ctk.CTkCheckBox(settings_tab, text="NG ファイルを _NG フォルダへ移動", variable=self.move_ng_var).grid(row=3, column=0, padx=12, pady=6, sticky="w")
+        ctk.CTkCheckBox(settings_tab, text=f"NG ファイルを {MANAGEMENT_FOLDER_NAME}/_NG へ移動", variable=self.move_ng_var).grid(row=3, column=0, padx=12, pady=6, sticky="w")
         ctk.CTkCheckBox(settings_tab, text="CSV ログを出力", variable=self.export_csv_var).grid(row=4, column=0, padx=12, pady=6, sticky="w")
         ctk.CTkFrame(settings_tab, fg_color="transparent").grid(row=5, column=0, sticky="nsew")
 
@@ -2112,7 +2124,10 @@ class BatchRenameApp(ctk.CTk):
 
     def _report_root_path(self, folders: list[Path]) -> Path:
         common = Path(os.path.commonpath([str(folder) for folder in folders]))
-        return common if common.is_dir() else folders[0].parent
+        report_root = common if common.is_dir() else folders[0].parent
+        destination = management_folder_path(report_root)
+        destination.mkdir(exist_ok=True)
+        return destination
 
     def _build_project_report_rows(
         self,
@@ -2328,8 +2343,9 @@ class BatchRenameApp(ctk.CTk):
                 execute_rename_plan(rename_plan, folder, settings, progress_callback=progress_callback)
 
                 if settings.export_csv:
-                    csv_path = folder / "rename_log.csv"
+                    csv_path = management_folder_path(folder) / "rename_log.csv"
                     write_rename_log(log_rows, csv_path)
+                organize_management_files(folder, settings)
 
                 self._apply_post_rename_session_state(session, rename_plan, settings)
                 completed_folders += 1
@@ -2343,7 +2359,7 @@ class BatchRenameApp(ctk.CTk):
 
             completion_lines = ["リネームが完了しました。", f"処理対象数: {completed_folders}", f"案件レポートCSV: {report_csv_path}", f"案件レポートTXT: {report_txt_path}"]
             if settings.export_csv:
-                completion_lines.append("各フォルダに rename_log.csv を保存しました。")
+                completion_lines.append(f"各フォルダの {MANAGEMENT_FOLDER_NAME}/rename_log.csv を保存しました。")
             if skipped_folders:
                 completion_lines.extend(["", "未処理:", *skipped_folders])
             messagebox.showinfo("完了", "\n".join(completion_lines))
