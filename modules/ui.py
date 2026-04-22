@@ -41,10 +41,10 @@ TABLE_COLUMN_WIDTHS = {
     1: 62,
     2: 62,
     3: 66,
-    4: 190,
-    5: 360,
-    6: 72,
-    7: 260,
+    4: 176,
+    5: 330,
+    6: 60,
+    7: 320,
 }
 TABLE_WIDTH = sum(TABLE_COLUMN_WIDTHS.values())
 TABLE_ROW_HEIGHT = 54
@@ -58,6 +58,9 @@ SECONDARY_BUTTON_STYLE = {
     "hover_color": ("#475569", "#64748b"),
     "text_color": ("white", "white"),
 }
+ROW_CONTROL_Y = 8
+ROW_BUTTON_HEIGHT = 38
+ROW_CHECKBOX_SIZE = 32
 
 
 @dataclass(slots=True)
@@ -134,25 +137,26 @@ class FileRow(ctk.CTkFrame):
         drag_handle.bind("<ButtonPress-1>", lambda _event: self._on_drag_start(self.file_item.original_filename))
         drag_handle.bind("<ButtonRelease-1>", lambda event: self._on_drag_end(self.file_item.original_filename, event.y_root))
 
-        ctk.CTkCheckBox(self, text="", width=32, height=32, variable=self.ok_var, command=self._toggle_ok).place(
-            x=TABLE_COLUMN_X[1] + 20, y=11
+        ctk.CTkCheckBox(self, text="", width=ROW_CHECKBOX_SIZE, height=ROW_CHECKBOX_SIZE, variable=self.ok_var, command=self._toggle_ok).place(
+            x=TABLE_COLUMN_X[1] + 15, y=11
         )
-        ctk.CTkCheckBox(self, text="", width=32, height=32, variable=self.ng_var, command=self._toggle_ng).place(
-            x=TABLE_COLUMN_X[2] + 20, y=11
+        ctk.CTkCheckBox(self, text="", width=ROW_CHECKBOX_SIZE, height=ROW_CHECKBOX_SIZE, variable=self.ng_var, command=self._toggle_ng).place(
+            x=TABLE_COLUMN_X[2] + 15, y=11
         )
 
-        self.play_button = ctk.CTkButton(self, text="▶", width=56, height=38, command=lambda: self._on_play_toggle(self.file_item.path))
-        self.play_button.place(x=TABLE_COLUMN_X[3] + 8, y=8)
+        self.play_button = ctk.CTkButton(self, text="▶", width=50, height=ROW_BUTTON_HEIGHT, command=lambda: self._on_play_toggle(self.file_item.path))
+        self.play_button.place(x=TABLE_COLUMN_X[3] + 8, y=ROW_CONTROL_Y)
 
-        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 8, height=40)
-        action_frame.place(x=TABLE_COLUMN_X[4] + 4, y=7)
+        action_frame = ctk.CTkFrame(self, fg_color="transparent", width=TABLE_COLUMN_WIDTHS[4] - 8, height=ROW_BUTTON_HEIGHT)
+        action_frame.place(x=TABLE_COLUMN_X[4] + 4, y=ROW_CONTROL_Y)
         action_frame.grid_propagate(False)
-        ctk.CTkButton(action_frame, text="余白", width=56, command=lambda: self._on_trim(self.file_item.path)).grid(row=0, column=0, padx=(0, 4), sticky="w")
-        ctk.CTkButton(action_frame, text="分割", width=56, command=lambda: self._on_split(self.file_item)).grid(row=0, column=1, padx=(0, 4), sticky="w")
+        ctk.CTkButton(action_frame, text="余白", width=50, height=ROW_BUTTON_HEIGHT, command=lambda: self._on_trim(self.file_item.path)).grid(row=0, column=0, padx=(0, 4), sticky="w")
+        ctk.CTkButton(action_frame, text="分割", width=50, height=ROW_BUTTON_HEIGHT, command=lambda: self._on_split(self.file_item)).grid(row=0, column=1, padx=(0, 4), sticky="w")
         self.restore_trim_button = ctk.CTkButton(
             action_frame,
             text="戻す",
-            width=56,
+            width=50,
+            height=ROW_BUTTON_HEIGHT,
             **SECONDARY_BUTTON_STYLE,
             command=lambda: self._on_restore_trim(self.file_item.path),
         )
@@ -269,6 +273,7 @@ class BatchRenameApp(ctk.CTk):
         self.preview_temp_path: Path | None = None
         self.trim_dialog: ctk.CTkToplevel | None = None
         self.trim_waveform_drag_handle: str | None = None
+        self.workflow_save_after_id: str | None = None
 
         self.digits_var = tk.StringVar(value=self.app_settings.get("digits", "3桁"))
         self.keep_text_var = tk.BooleanVar(value=bool(self.app_settings.get("keep_text", True)))
@@ -286,7 +291,7 @@ class BatchRenameApp(ctk.CTk):
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0, minsize=320)
+        self.grid_columnconfigure(1, weight=0, minsize=300)
         self.grid_rowconfigure(1, weight=1)
 
         top_bar = ctk.CTkFrame(self)
@@ -391,7 +396,7 @@ class BatchRenameApp(ctk.CTk):
 
         self.side_panel = ctk.CTkFrame(self)
         self.side_panel.grid(row=0, column=1, rowspan=2, padx=(8, 16), pady=(16, 8), sticky="nsew")
-        self.side_panel.configure(width=320)
+        self.side_panel.configure(width=300)
         self.side_panel.grid_propagate(False)
         self.side_panel.grid_columnconfigure(0, weight=1)
         self.side_panel.grid_rowconfigure(2, weight=1)
@@ -401,7 +406,7 @@ class BatchRenameApp(ctk.CTk):
             text="重複番号、除外ファイル、Undo 状態をここに表示します。",
             justify="left",
             anchor="w",
-            wraplength=280,
+            wraplength=260,
         )
         self.warning_label.grid(row=0, column=0, padx=12, pady=(12, 8), sticky="ew")
 
@@ -505,7 +510,19 @@ class BatchRenameApp(ctk.CTk):
             "undo_manual_order": list(session.undo_manual_order),
         }
 
-    def _persist_workflow_state(self) -> None:
+    def _persist_workflow_state(self, immediate: bool = False) -> None:
+        if immediate:
+            if self.workflow_save_after_id is not None:
+                self.after_cancel(self.workflow_save_after_id)
+                self.workflow_save_after_id = None
+            self._write_workflow_state()
+            return
+        if self.workflow_save_after_id is not None:
+            self.after_cancel(self.workflow_save_after_id)
+        self.workflow_save_after_id = self.after(350, self._write_workflow_state)
+
+    def _write_workflow_state(self) -> None:
+        self.workflow_save_after_id = None
         self._save_current_state()
         if not self.folder_order:
             clear_workflow_state()
@@ -563,7 +580,7 @@ class BatchRenameApp(ctk.CTk):
 
     def on_close(self) -> None:
         self._persist_settings()
-        self._persist_workflow_state()
+        self._persist_workflow_state(immediate=True)
         self._cleanup_preview_temp()
         self.audio_player.stop()
         self.destroy()
@@ -947,7 +964,11 @@ class BatchRenameApp(ctk.CTk):
         session.ok_flags[filename] = is_ok
         session.reviewed_flags[filename] = True
         self._persist_workflow_state()
-        self._render_current_folder()
+        if self.show_mode_var.get() == "全件":
+            self._render_missing_checkboxes(session)
+            self._update_warnings(session)
+        else:
+            self._render_current_folder()
 
     def _monitor_playback(self) -> None:
         if self.playing_path is None:
