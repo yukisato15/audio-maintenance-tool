@@ -29,18 +29,22 @@ from modules.settings_store import clear_workflow_state, load_settings, load_wor
 
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("blue")
+if os.name == "nt":
+    # Windows often runs at 125%+ display scaling. Without this, the same
+    # logical layout that fits on macOS clips the rightmost table columns.
+    ctk.set_widget_scaling(0.86)
 
 DISPLAY_PREFIX_PATTERN = re.compile(r"^(\d+)")
 
 TABLE_COLUMN_WIDTHS = {
-    0: 52,
-    1: 72,
-    2: 72,
-    3: 72,
-    4: 196,
-    5: 440,
-    6: 90,
-    7: 220,
+    0: 46,
+    1: 62,
+    2: 62,
+    3: 66,
+    4: 190,
+    5: 360,
+    6: 72,
+    7: 260,
 }
 TABLE_WIDTH = sum(TABLE_COLUMN_WIDTHS.values())
 TABLE_ROW_HEIGHT = 54
@@ -282,7 +286,7 @@ class BatchRenameApp(ctk.CTk):
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0, minsize=400)
+        self.grid_columnconfigure(1, weight=0, minsize=320)
         self.grid_rowconfigure(1, weight=1)
 
         top_bar = ctk.CTkFrame(self)
@@ -387,7 +391,7 @@ class BatchRenameApp(ctk.CTk):
 
         self.side_panel = ctk.CTkFrame(self)
         self.side_panel.grid(row=0, column=1, rowspan=2, padx=(8, 16), pady=(16, 8), sticky="nsew")
-        self.side_panel.configure(width=400)
+        self.side_panel.configure(width=320)
         self.side_panel.grid_propagate(False)
         self.side_panel.grid_columnconfigure(0, weight=1)
         self.side_panel.grid_rowconfigure(2, weight=1)
@@ -397,7 +401,7 @@ class BatchRenameApp(ctk.CTk):
             text="重複番号、除外ファイル、Undo 状態をここに表示します。",
             justify="left",
             anchor="w",
-            wraplength=420,
+            wraplength=280,
         )
         self.warning_label.grid(row=0, column=0, padx=12, pady=(12, 8), sticky="ew")
 
