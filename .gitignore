@@ -5,3 +5,4 @@ build/
 dist/
 release/
 *.spec
+assets/audio_maintenance_tool.ico
