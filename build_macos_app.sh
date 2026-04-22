@@ -14,13 +14,24 @@ python3 -m PyInstaller \
   --noconfirm \
   --clean \
   --windowed \
-  --name "音声整備ツール" \
+  --name "AudioMaintenanceTool" \
+  --osx-bundle-identifier "com.yukisato.audio-maintenance-tool" \
   --icon "assets/audio_maintenance_tool.icns" \
   --collect-data customtkinter \
   --hidden-import tkinterdnd2 \
   --add-data "${TKDND_DIR}:tkinterdnd2/tkdnd" \
   main.py
 
+APP_PATH="dist/AudioMaintenanceTool.app"
+FINAL_APP_PATH="dist/音声整備ツール.app"
+PLIST_PATH="${APP_PATH}/Contents/Info.plist"
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 音声整備ツール" "$PLIST_PATH"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName 音声整備ツール" "$PLIST_PATH"
+
+mv "$APP_PATH" "$FINAL_APP_PATH"
+codesign --force --deep --sign - "$FINAL_APP_PATH"
+
 echo ""
 echo "Build complete:"
-echo "  ${ROOT_DIR}/dist/音声整備ツール.app"
+echo "  ${ROOT_DIR}/${FINAL_APP_PATH}"
