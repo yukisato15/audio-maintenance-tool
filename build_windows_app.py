@@ -22,7 +22,7 @@ def main() -> None:
         "--clean",
         "--windowed",
         "--name",
-        "音声整備ツール",
+        "AudioMaintenanceTool",
         "--icon",
         "assets/audio_maintenance_tool.ico",
         "--collect-data",

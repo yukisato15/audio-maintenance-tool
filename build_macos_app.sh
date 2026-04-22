@@ -23,15 +23,14 @@ python3 -m PyInstaller \
   main.py
 
 APP_PATH="dist/AudioMaintenanceTool.app"
-FINAL_APP_PATH="dist/音声整備ツール.app"
 PLIST_PATH="${APP_PATH}/Contents/Info.plist"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 音声整備ツール" "$PLIST_PATH"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName 音声整備ツール" "$PLIST_PATH"
 
-mv "$APP_PATH" "$FINAL_APP_PATH"
-codesign --force --deep --sign - "$FINAL_APP_PATH"
+xattr -cr "$APP_PATH" || true
+codesign --force --deep --sign - "$APP_PATH"
 
 echo ""
 echo "Build complete:"
-echo "  ${ROOT_DIR}/${FINAL_APP_PATH}"
+echo "  ${ROOT_DIR}/${APP_PATH}"

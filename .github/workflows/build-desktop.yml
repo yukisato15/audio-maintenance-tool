@@ -14,10 +14,10 @@ jobs:
         include:
           - os: windows-latest
             platform_name: windows
-            artifact_name: 音声整備ツール-windows
+            artifact_name: AudioMaintenanceTool-windows
           - os: macos-latest
             platform_name: macos
-            artifact_name: 音声整備ツール-macos
+            artifact_name: AudioMaintenanceTool-macos
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -46,12 +46,12 @@ jobs:
         if: matrix.platform_name == 'windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "dist/音声整備ツール/*" -DestinationPath "dist/音声整備ツール-windows.zip" -Force
+          Compress-Archive -Path "dist/AudioMaintenanceTool/*" -DestinationPath "dist/AudioMaintenanceTool-windows.zip" -Force
 
       - name: Package macOS app
         if: matrix.platform_name == 'macos'
         run: |
-          ditto -c -k --sequesterRsrc --keepParent "dist/音声整備ツール.app" "dist/音声整備ツール-macos.zip"
+          ditto -c -k --norsrc --keepParent "dist/AudioMaintenanceTool.app" "dist/AudioMaintenanceTool-macos.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

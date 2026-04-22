@@ -676,6 +676,8 @@ class BatchRenameApp(ctk.CTk):
             if folder in self.folder_sessions:
                 continue
             parse_result = parse_audio_folder(folder)
+            if not parse_result.files:
+                continue
             session = FolderSession(
                 folder=folder,
                 parse_result=parse_result,
