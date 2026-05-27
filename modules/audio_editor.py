@@ -212,6 +212,29 @@ def split_audio_in_place(
 def has_split_backup(path: Path) -> bool:
     return _split_backup_path(path).exists()
 
+
+def restore_split_backup(original_path: Path, split_file_paths: list[Path]) -> None:
+    """分割を取り消し、元ファイルを復元する。
+
+    original_path: 分割前の元ファイルパス（現在は存在しない）
+    split_file_paths: 分割によって生成されたファイルのパスのリスト（削除される）
+    """
+    backup = _split_backup_path(original_path)
+    if not backup.exists():
+        raise FileNotFoundError(f"分割バックアップが見つかりません: {backup.name}")
+
+    # 分割後ファイルと、それらの余白修正バックアップをすべて削除
+    for split_path in split_file_paths:
+        try:
+            _remove_trim_backup(split_path)
+            split_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    # バックアップを元のファイル名に戻す
+    backup.rename(original_path)
+
+
 def has_trim_backup(path: Path) -> bool:
     backup_path, _manifest = _find_trim_backup(path)
     return backup_path is not None and backup_path.exists()

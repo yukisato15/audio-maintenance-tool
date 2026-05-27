@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from modules.audio_editor import AudioProcessOptions, analyze_audio_levels, apply_trim_in_place, attenuate_audio_in_place, create_trim_preview, get_audio_metadata, get_waveform_minmax, has_trim_backup, restore_trim_backup, split_audio_in_place
+from modules.audio_editor import AudioProcessOptions, analyze_audio_levels, apply_trim_in_place, attenuate_audio_in_place, create_trim_preview, get_audio_metadata, get_waveform_minmax, has_split_backup, has_trim_backup, restore_split_backup, restore_trim_backup, split_audio_in_place
 from modules.audio_player import AudioPlayer
 from modules.csv_logger import write_rename_log
 from modules.file_parser import ParseResult, ParsedAudioFile, parse_audio_folder
@@ -66,16 +66,16 @@ ROW_BUTTON_HEIGHT = 38
 ROW_CHECKBOX_SIZE = 32
 
 
-def file_row_style(file_item: ParsedAudioFile, is_ng: bool, reviewed: bool, trim_modified: bool) -> tuple[str | tuple[str, str], str | None]:
+def file_row_style(file_item: ParsedAudioFile, is_ng: bool, reviewed: bool, trim_modified: bool, split_restorable: bool) -> tuple[str | tuple[str, str], str | list[str] | tuple[str, str] | None]:
     if is_ng:
         return ("#fde8e8", "#442727"), "#dc2626"
     if not reviewed:
         return ("#fff7d6", "#3f3721"), "#ca8a04"
-    if trim_modified:
+    if trim_modified or split_restorable:
         return ("#e8f1ff", "#23344c"), "#2563eb"
     if file_item.duplicate_index:
         return ("#ffedd5", "#45311f"), "#d97706"
-    return "transparent", None
+    return "transparent", "#2563eb"
 
 
 @dataclass(slots=True)
@@ -91,6 +91,8 @@ class FolderSession:
     reviewed_flags: dict[str, bool] = field(default_factory=dict)
     edited_texts: dict[str, str] = field(default_factory=dict)
     split_required_filenames: set[str] = field(default_factory=set)
+    # 分割後ファイル名 -> 分割前の元ファイル名 のマッピング（分割の「戻す」に使用）
+    split_origin_map: dict[str, str] = field(default_factory=dict)
 
 
 class FileRow(ctk.CTkFrame):
@@ -100,6 +102,7 @@ class FileRow(ctk.CTkFrame):
         file_item: ParsedAudioFile,
         initial_ok: bool,
         trim_modified: bool,
+        split_restorable: bool,
         reviewed: bool,
         text_value: str,
         split_required: bool,
@@ -107,23 +110,24 @@ class FileRow(ctk.CTkFrame):
         on_play_toggle,
         on_trim,
         on_split,
-        on_restore_trim,
+        on_restore_audio,
         on_text_change,
         on_drag_start,
         on_drag_end,
     ) -> None:
         is_ng = reviewed and not initial_ok
-        row_color, badge_color = file_row_style(file_item, is_ng, reviewed, trim_modified)
+        row_color, badge_color = file_row_style(file_item, is_ng, reviewed, trim_modified, split_restorable)
 
         super().__init__(master, fg_color=row_color, width=TABLE_WIDTH, height=TABLE_ROW_HEIGHT)
         self.file_item = file_item
         self.trim_modified = trim_modified
+        self.split_restorable = split_restorable
         self.reviewed = reviewed
         self._on_status_change = on_status_change
         self._on_play_toggle = on_play_toggle
         self._on_trim = on_trim
         self._on_split = on_split
-        self._on_restore_trim = on_restore_trim
+        self._on_restore_audio = on_restore_audio
         self._on_text_change = on_text_change
         self._on_drag_start = on_drag_start
         self._on_drag_end = on_drag_end
@@ -161,10 +165,10 @@ class FileRow(ctk.CTkFrame):
             width=50,
             height=ROW_BUTTON_HEIGHT,
             **SECONDARY_BUTTON_STYLE,
-            command=lambda: self._on_restore_trim(self.file_item.path),
+            command=lambda: self._on_restore_audio(self.file_item.path),
         )
         self.restore_trim_button.grid(row=0, column=2, sticky="w")
-        if not trim_modified:
+        if not trim_modified and not split_restorable:
             self.restore_trim_button.configure(state="disabled")
 
         status_suffixes: list[str] = []
@@ -174,6 +178,8 @@ class FileRow(ctk.CTkFrame):
             status_suffixes.append("重複")
         if trim_modified:
             status_suffixes.append("余白修正済み")
+        if split_restorable:
+            status_suffixes.append("分割済み")
         if split_required:
             status_suffixes.append("分割")
         if not reviewed:
@@ -213,8 +219,10 @@ class FileRow(ctk.CTkFrame):
             status_suffixes.append("NG")
         if self.file_item.duplicate_index:
             status_suffixes.append("重複")
-        if self.restore_trim_button.cget("state") != "disabled":
+        if self.trim_modified:
             status_suffixes.append("余白修正済み")
+        if self.split_restorable:
+            status_suffixes.append("分割済み")
         if self.split_required:
             status_suffixes.append("分割")
         if not (self.ok_var.get() or self.ng_var.get()):
@@ -224,7 +232,7 @@ class FileRow(ctk.CTkFrame):
 
     def _refresh_visual_state(self) -> None:
         self.reviewed = self.ok_var.get() or self.ng_var.get()
-        row_color, badge_color = file_row_style(self.file_item, self.ng_var.get(), self.reviewed, self.trim_modified)
+        row_color, badge_color = file_row_style(self.file_item, self.ng_var.get(), self.reviewed, self.trim_modified, self.split_restorable)
         self.configure(fg_color=row_color)
         self.filename_label.configure(
             text=self._filename_label_text(self.text_var.get()),
@@ -248,20 +256,18 @@ class FileRow(ctk.CTkFrame):
             self.play_button.configure(text="▶", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"], hover_color=ctk.ThemeManager.theme["CTkButton"]["hover_color"])
 
     def _toggle_ok(self) -> None:
-        if self.ok_var.get():
-            self.ng_var.set(False)
-        elif not self.ng_var.get():
-            self.ok_var.set(True)
+        # OKチェックをクリックしたら常に ok=True, ng=False に固定
+        self.ok_var.set(True)
+        self.ng_var.set(False)
         self._refresh_visual_state()
-        self._on_status_change(self.file_item.original_filename, self.ok_var.get())
+        self._on_status_change(self.file_item.original_filename, True)
 
     def _toggle_ng(self) -> None:
-        if self.ng_var.get():
-            self.ok_var.set(False)
-        elif not self.ok_var.get():
-            self.ng_var.set(True)
+        # NGチェックをクリックしたら常に ng=True, ok=False に固定
+        self.ng_var.set(True)
+        self.ok_var.set(False)
         self._refresh_visual_state()
-        self._on_status_change(self.file_item.original_filename, self.ok_var.get())
+        self._on_status_change(self.file_item.original_filename, False)
 
 
 class BatchRenameApp(ctk.CTk):
@@ -517,6 +523,7 @@ class BatchRenameApp(ctk.CTk):
             "reviewed_flags": dict(session.reviewed_flags),
             "edited_texts": dict(session.edited_texts),
             "split_required_filenames": sorted(session.split_required_filenames),
+            "split_origin_map": dict(session.split_origin_map),
             "missing_indices": sorted(session.missing_indices),
             "undo_selected_filenames": None if session.undo_selected_filenames is None else sorted(session.undo_selected_filenames),
             "undo_manual_order": list(session.undo_manual_order),
@@ -553,11 +560,16 @@ class BatchRenameApp(ctk.CTk):
             return
 
         restored_paths: list[Path] = []
+        missing_folder_names: list[str] = []
         for item in folders_state:
             if not isinstance(item, dict):
                 continue
             folder = Path(str(item.get("folder", "")))
             if not folder.exists() or not folder.is_dir():
+                # フォルダが一時的に見当たらない（USBドライブ未接続など）場合は
+                # スキップするが、状態ファイルは削除しない
+                raw_name = item.get("folder", "")
+                missing_folder_names.append(Path(str(raw_name)).name if raw_name else str(raw_name))
                 continue
             selected = item.get("selected_filenames")
             selected_names = set(selected) if isinstance(selected, list) else None
@@ -574,6 +586,7 @@ class BatchRenameApp(ctk.CTk):
                 reviewed_flags=dict(item.get("reviewed_flags", {})),
                 edited_texts=dict(item.get("edited_texts", {})),
                 split_required_filenames=set(item.get("split_required_filenames", [])),
+                split_origin_map=dict(item.get("split_origin_map", {})),
             )
             self._refresh_session(session)
             self.folder_sessions[folder] = session
@@ -581,14 +594,30 @@ class BatchRenameApp(ctk.CTk):
             restored_paths.append(folder)
 
         if not restored_paths:
-            clear_workflow_state()
+            if missing_folder_names:
+                # 保存済みフォルダが全て存在しない（USBドライブ未接続など）
+                # 状態ファイルは消去せず、ユーザーに案内メッセージを表示する
+                names_text = "\n".join(f"  ・{name}" for name in missing_folder_names)
+                messagebox.showwarning(
+                    "前回の作業フォルダが見つかりません",
+                    f"前回の作業状態を保存したフォルダが見つからないため、読み込めませんでした。\n\n"
+                    f"{names_text}\n\n"
+                    "フォルダが外付けドライブやネットワークドライブにある場合は接続後にツールを再起動してください。\n"
+                    "フォルダを手動で追加することもできます（その際、前回の作業状態は引き継がれません）。",
+                )
+            else:
+                clear_workflow_state()
             return
 
         desired_current = Path(str(state.get("current_folder", ""))) if state.get("current_folder") else restored_paths[0]
         self.current_folder = desired_current if desired_current in self.folder_sessions else restored_paths[0]
         self._refresh_folder_list()
         self._render_current_folder()
-        self.status_var.set("前回の作業状態を復元しました。")
+        if missing_folder_names:
+            names_text = "、".join(missing_folder_names)
+            self.status_var.set(f"前回の作業状態を一部復元しました（見つからないフォルダ: {names_text}）。")
+        else:
+            self.status_var.set("前回の作業状態を復元しました。")
 
     def on_close(self) -> None:
         self._persist_settings()
@@ -671,9 +700,13 @@ class BatchRenameApp(ctk.CTk):
     def add_folder_sessions(self, folders: list[Path]) -> None:
         self._save_current_state()
         added = 0
+        already_loaded = 0
         excluded_messages: list[str] = []
         for folder in folders:
             if folder in self.folder_sessions:
+                # 既に読み込み済みのフォルダは追加数には含めないが、
+                # 「追加できない」ではなく「既に読み込み済み」として区別する
+                already_loaded += 1
                 continue
             parse_result = parse_audio_folder(folder)
             if not parse_result.files:
@@ -692,7 +725,7 @@ class BatchRenameApp(ctk.CTk):
             added += 1
             if parse_result.excluded_files:
                 excluded_messages.append(f"[{folder.name}]\n" + "\n".join(parse_result.excluded_files))
-        self._after_sessions_added(added, excluded_messages)
+        self._after_sessions_added(added, already_loaded, excluded_messages)
 
     def add_file_sessions(self, files: list[Path]) -> None:
         self._save_current_state()
@@ -702,6 +735,7 @@ class BatchRenameApp(ctk.CTk):
                 grouped.setdefault(path.parent, set()).add(path.name)
 
         added = 0
+        already_loaded = 0
         excluded_messages: list[str] = []
         for folder, selected_names in grouped.items():
             session = self.folder_sessions.get(folder)
@@ -720,13 +754,22 @@ class BatchRenameApp(ctk.CTk):
                 self.folder_order.append(folder)
                 added += 1
             elif session.selected_filenames is not None:
-                session.selected_filenames.update(selected_names)
-                self._refresh_session(session)
+                # 既存セッションへのファイル追加（ファイル単体選択モード）
+                new_names = selected_names - session.selected_filenames
+                if new_names:
+                    session.selected_filenames.update(new_names)
+                    self._refresh_session(session)
+                    added += 1
+                else:
+                    already_loaded += 1
+            else:
+                # フォルダモードで既に読み込み済みのフォルダへの追加
+                already_loaded += 1
             if session.parse_result.excluded_files:
                 excluded_messages.append(f"[{folder.name}]\n" + "\n".join(session.parse_result.excluded_files))
-        self._after_sessions_added(added, excluded_messages)
+        self._after_sessions_added(added, already_loaded, excluded_messages)
 
-    def _after_sessions_added(self, added: int, excluded_messages: list[str]) -> None:
+    def _after_sessions_added(self, added: int, already_loaded: int, excluded_messages: list[str]) -> None:
         self._refresh_folder_list()
         if self.folder_order and self.current_folder is None:
             self._set_current_folder(self.folder_order[0])
@@ -737,7 +780,15 @@ class BatchRenameApp(ctk.CTk):
                 "解析できないファイル",
                 "先頭番号を解析できないため、以下のファイルを除外しました。\n\n" + "\n\n".join(excluded_messages),
             )
-        self.status_var.set(f"{added} 件の対象を追加しました。" if added else "追加できる新規対象はありませんでした。")
+        if added:
+            self.status_var.set(f"{added} 件の対象を追加しました。")
+        elif already_loaded:
+            self.status_var.set(
+                "選択した対象は既に一覧に読み込まれています。"
+                "　※「一覧をクリア」ボタンを押してから再追加すると最新の状態で読み込み直せます。"
+            )
+        else:
+            self.status_var.set("追加できる対象がありませんでした。（WAV ファイルが見つからないか、番号が読み取れませんでした）")
         self._persist_workflow_state()
 
     def _normalize_dropped_folders(self, raw_data: str) -> tuple[list[Path], list[Path]]:
@@ -876,11 +927,18 @@ class BatchRenameApp(ctk.CTk):
 
         for row_number, file_item in enumerate(visible_files, start=1):
             initial_ok = session.ok_flags.get(file_item.original_filename, True)
+            # 分割後ファイルか確認：このファイルが分割バックアップを持つ元ファイル名を逆引き
+            origin_name = session.split_origin_map.get(file_item.original_filename)
+            split_restorable = (
+                origin_name is not None
+                and has_split_backup(file_item.path.parent / origin_name)
+            )
             row = FileRow(
                 self.file_scroll,
                 file_item,
                 initial_ok,
                 has_trim_backup(file_item.path),
+                split_restorable,
                 session.reviewed_flags.get(file_item.original_filename, False),
                 session.edited_texts.get(file_item.original_filename, file_item.text_portion),
                 file_item.original_filename in session.split_required_filenames,
@@ -888,7 +946,7 @@ class BatchRenameApp(ctk.CTk):
                 self.toggle_play_audio,
                 self.open_trim_dialog,
                 self.open_split_dialog,
-                self.restore_trim_file,
+                self.restore_audio_backup,
                 self._on_text_change,
                 self.start_row_drag,
                 self.finish_row_drag,
@@ -982,7 +1040,7 @@ class BatchRenameApp(ctk.CTk):
             self._render_missing_checkboxes(session)
             self._update_warnings(session)
         else:
-            self._render_current_folder()
+            self.after(10, self._render_current_folder)
 
     def _monitor_playback(self) -> None:
         if self.playing_path is None:
@@ -1123,21 +1181,72 @@ class BatchRenameApp(ctk.CTk):
             self._refresh_folder_list()
         self._persist_workflow_state()
 
-    def restore_trim_file(self, path: Path) -> None:
+    def restore_audio_backup(self, path: Path) -> None:
+        """余白修正または分割のどちらかを戻す。分割を優先して確認する。"""
+        session = self.folder_sessions.get(path.parent)
+
+        # --- 分割バックアップの確認 ---
+        if session is not None:
+            origin_name = session.split_origin_map.get(path.name)
+            if origin_name is not None:
+                origin_path = path.parent / origin_name
+                if has_split_backup(origin_path):
+                    self._restore_split_file(path, session, origin_path)
+                    return
+
+        # --- 余白修正バックアップの確認 ---
         try:
             self.stop_audio()
             self._cleanup_preview_temp()
             restore_trim_backup(path)
             self._refresh_current_session_after_audio_edit(path)
-            session = self.folder_sessions.get(path.parent)
             if session is not None:
                 session.reviewed_flags[path.name] = True
             self._persist_workflow_state()
             self.status_var.set(f"余白修正前に戻しました: {path.name}")
         except FileNotFoundError:
-            messagebox.showwarning("未修正", "このファイルには戻せる余白修正がありません。")
+            messagebox.showwarning("未修正", "このファイルには戻せる修正がありません。")
         except Exception as exc:
-            messagebox.showerror("余白修正エラー", str(exc))
+            messagebox.showerror("修正の取り消しエラー", str(exc))
+
+    def _restore_split_file(self, path: Path, session: FolderSession, origin_path: Path) -> None:
+        """分割を取り消し、元ファイル1本に戻す。"""
+        # 同じ元ファイルから生まれた分割後ファイルを全て収集
+        origin_name = origin_path.name
+        sibling_names = [name for name, orig in session.split_origin_map.items() if orig == origin_name]
+        sibling_paths = [path.parent / name for name in sibling_names]
+
+        try:
+            self.stop_audio()
+            self._cleanup_preview_temp()
+            restore_split_backup(origin_path, sibling_paths)
+        except FileNotFoundError as exc:
+            messagebox.showwarning("分割取り消しエラー", str(exc))
+            return
+        except Exception as exc:
+            messagebox.showerror("分割取り消しエラー", str(exc))
+            return
+
+        # セッションを更新: 分割後ファイルを除去し、元ファイルを追加
+        if session.selected_filenames is not None:
+            for name in sibling_names:
+                session.selected_filenames.discard(name)
+            session.selected_filenames.add(origin_name)
+        self._replace_name_in_manual_order(session, sibling_names[0] if sibling_names else path.name, [origin_name])
+        for name in sibling_names:
+            session.ok_flags.pop(name, None)
+            session.reviewed_flags.pop(name, None)
+            session.edited_texts.pop(name, None)
+            session.split_required_filenames.discard(name)
+            session.split_origin_map.pop(name, None)
+        # 元ファイルのデフォルト状態を設定
+        session.ok_flags[origin_name] = True
+        session.reviewed_flags[origin_name] = False
+        session.split_required_filenames.discard(origin_name)
+        self._refresh_session(session)
+        self._persist_workflow_state()
+        self._render_current_folder()
+        self.status_var.set(f"分割を取り消しました: {origin_name} に戻しました。")
 
     @staticmethod
     def _level_improvement_text(level_stats) -> str | None:
@@ -1446,6 +1555,9 @@ class BatchRenameApp(ctk.CTk):
                 session.reviewed_flags.pop(file_item.original_filename, None)
                 session.edited_texts.pop(file_item.original_filename, None)
                 session.split_required_filenames.discard(file_item.original_filename)
+                # 分割前の元ファイル名を記録（「戻す」ボタン用）
+                for created_name in created_names:
+                    session.split_origin_map[created_name] = file_item.original_filename
                 self._refresh_session(session)
                 for created_name, text_value in zip(created_names, segment_texts):
                     session.ok_flags[created_name] = True
@@ -1907,7 +2019,10 @@ class BatchRenameApp(ctk.CTk):
         if target_row is None:
             return
         self._move_manual_order(session, filename, target_row.file_item.original_filename)
-        self._render_current_folder()
+        # Rebuilding widgets synchronously inside mouse release events can cause event leakages
+        # (e.g. mouse release triggering click events on newly-recreated widgets at the same screen position).
+        # Deferring widget recreation using after() ensures the event finishes completely first.
+        self.after(10, self._render_current_folder)
         self.status_var.set("並べ替えを更新しました。")
 
     def _move_manual_order(self, session: FolderSession, source_name: str, target_name: str) -> None:
