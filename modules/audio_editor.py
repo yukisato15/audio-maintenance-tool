@@ -235,7 +235,58 @@ def restore_split_backup(original_path: Path, split_file_paths: list[Path]) -> N
     backup.rename(original_path)
 
 
-def merge_audio_files(source_paths: list[Path], destination: Path) -> Path:
+def _compensate_boundary_fade(
+    raw_frames: bytes,
+    sample_width: int,
+    channels: int,
+    sample_rate: int,
+    compensate_start: bool,
+    compensate_end: bool,
+    fade_ms: int,
+) -> bytes:
+    if fade_ms <= 0 or not raw_frames:
+        return raw_frames
+
+    samples = _decode_pcm(raw_frames, sample_width)
+    frame_count = len(samples) // max(channels, 1)
+    if frame_count <= 1:
+        return raw_frames
+
+    fade_frames = min(max(1, int(sample_rate * fade_ms / 1000)), frame_count)
+    if fade_frames <= 1:
+        return raw_frames
+
+    # Fully faded samples cannot be recovered. Cap inverse gain so boundary
+    # noise and quantization artifacts do not explode.
+    min_gain = 0.12
+
+    def apply_inverse(frame_index: int, original_gain: float) -> None:
+        inverse_gain = 1.0 / max(original_gain, min_gain)
+        base = frame_index * channels
+        for channel in range(channels):
+            sample_index = base + channel
+            samples[sample_index] = int(samples[sample_index] * inverse_gain)
+
+    if compensate_start:
+        for relative_index in range(fade_frames):
+            gain = relative_index / (fade_frames - 1)
+            apply_inverse(relative_index, gain)
+
+    if compensate_end:
+        start_frame = frame_count - fade_frames
+        for relative_index in range(fade_frames):
+            gain = (fade_frames - 1 - relative_index) / (fade_frames - 1)
+            apply_inverse(start_frame + relative_index, gain)
+
+    return _encode_pcm(samples, sample_width)
+
+
+def merge_audio_files(
+    source_paths: list[Path],
+    destination: Path,
+    compensate_boundary_fades: bool = False,
+    boundary_fade_ms: int = 400,
+) -> Path:
     if len(source_paths) < 2:
         raise ValueError("結合する音声ファイルを2件以上指定してください。")
     if destination.suffix.lower() != ".wav":
@@ -280,11 +331,19 @@ def merge_audio_files(source_paths: list[Path], destination: Path) -> Path:
                             "サンプルレート・チャンネル数・ビット深度が一致しないため結合できません。"
                         )
 
-                    while True:
-                        frames = src.readframes(8192)
-                        if not frames:
-                            break
-                        dst.writeframes(frames)
+                    frame_count = src.getnframes()
+                    frames = src.readframes(frame_count)
+                    if compensate_boundary_fades:
+                        frames = _compensate_boundary_fade(
+                            frames,
+                            params.sampwidth,
+                            params.nchannels,
+                            params.framerate,
+                            compensate_start=index > 0,
+                            compensate_end=index < len(sources) - 1,
+                            fade_ms=boundary_fade_ms,
+                        )
+                    dst.writeframes(frames)
 
         for source in sources:
             _remove_trim_backup(source)

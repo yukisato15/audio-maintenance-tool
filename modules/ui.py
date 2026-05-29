@@ -1376,6 +1376,7 @@ class BatchRenameApp(ctk.CTk):
         dialog.grid_columnconfigure(0, weight=1)
 
         filename_var = tk.StringVar(value=first_item.original_filename)
+        compensate_fades_var = tk.BooleanVar(value=True)
         first_duration = self._format_duration_ms(first_metadata.duration_ms)
         second_duration = self._format_duration_ms(second_metadata.duration_ms)
         total_duration = self._format_duration_ms(first_metadata.duration_ms + second_metadata.duration_ms)
@@ -1393,13 +1394,18 @@ class BatchRenameApp(ctk.CTk):
                     f"以下の2件をこの順番で結合します。\n\n"
                     f"1. {first_item.original_filename}\n"
                     f"2. {second_item.original_filename}\n\n"
-                    f"結合後: {destination_name}",
+                    f"結合後: {destination_name}\n"
+                    f"フェード補正: {'あり' if compensate_fades_var.get() else 'なし'}",
                     parent=dialog,
                 ):
                     return
                 self.stop_audio()
                 self._cleanup_preview_temp()
-                merged_path = merge_audio_files([first_item.path, second_item.path], destination)
+                merged_path = merge_audio_files(
+                    [first_item.path, second_item.path],
+                    destination,
+                    compensate_boundary_fades=compensate_fades_var.get(),
+                )
                 merged_name = merged_path.name
             except Exception as exc:
                 messagebox.showerror("結合エラー", str(exc), parent=dialog)
@@ -1439,10 +1445,15 @@ class BatchRenameApp(ctk.CTk):
         ctk.CTkLabel(dialog, text=f"結合後の長さ: {total_duration}", anchor="w", text_color=("gray35", "gray70")).grid(row=2, column=0, padx=20, pady=(0, 12), sticky="ew")
         ctk.CTkLabel(dialog, text="結合後のファイル名", anchor="w").grid(row=3, column=0, padx=20, pady=(0, 4), sticky="ew")
         filename_entry = ctk.CTkEntry(dialog, textvariable=filename_var, width=520)
-        filename_entry.grid(row=4, column=0, padx=20, pady=(0, 16), sticky="ew")
+        filename_entry.grid(row=4, column=0, padx=20, pady=(0, 10), sticky="ew")
+        ctk.CTkCheckBox(
+            dialog,
+            text="結合境界のフェードイン・フェードアウトを補正する",
+            variable=compensate_fades_var,
+        ).grid(row=5, column=0, padx=20, pady=(0, 16), sticky="w")
 
         button_row = ctk.CTkFrame(dialog, fg_color="transparent")
-        button_row.grid(row=5, column=0, padx=20, pady=(0, 18), sticky="e")
+        button_row.grid(row=6, column=0, padx=20, pady=(0, 18), sticky="e")
         ctk.CTkButton(button_row, text="閉じる", width=100, fg_color=("#d5d5d5", "#4a4a4a"), hover_color=("#c8c8c8", "#5a5a5a"), command=close_dialog).pack(side="right")
         ctk.CTkButton(button_row, text="この内容で結合", width=140, command=apply_merge).pack(side="right", padx=(0, 8))
         filename_entry.focus_set()
