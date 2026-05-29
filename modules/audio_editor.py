@@ -235,6 +235,69 @@ def restore_split_backup(original_path: Path, split_file_paths: list[Path]) -> N
     backup.rename(original_path)
 
 
+def merge_audio_files(source_paths: list[Path], destination: Path) -> Path:
+    if len(source_paths) < 2:
+        raise ValueError("結合する音声ファイルを2件以上指定してください。")
+    if destination.suffix.lower() != ".wav":
+        destination = destination.with_suffix(".wav")
+
+    sources = [Path(path) for path in source_paths]
+    if len({path.resolve() for path in sources}) != len(sources):
+        raise ValueError("同じファイル同士は結合できません。")
+    for source in sources:
+        if not source.exists():
+            raise FileNotFoundError(f"音声ファイルが見つかりません: {source.name}")
+        if source.suffix.lower() != ".wav":
+            raise ValueError(f"WAV ファイルではありません: {source.name}")
+        if source.parent != destination.parent:
+            raise ValueError("結合元と出力先は同じフォルダ内にしてください。")
+
+    source_resolved = {path.resolve() for path in sources}
+    if destination.exists() and destination.resolve() not in source_resolved:
+        raise FileExistsError(f"出力ファイルが既に存在します: {destination.name}")
+
+    first_params = None
+    comparable_params = None
+    temp_destination = destination.with_name(f".merge_tmp_{uuid.uuid4().hex}_{destination.name}")
+    try:
+        with wave.open(str(temp_destination), "wb") as dst:
+            for index, source in enumerate(sources):
+                with wave.open(str(source), "rb") as src:
+                    params = src.getparams()
+                    current_comparable = (
+                        params.nchannels,
+                        params.sampwidth,
+                        params.framerate,
+                        params.comptype,
+                        params.compname,
+                    )
+                    if index == 0:
+                        first_params = params
+                        comparable_params = current_comparable
+                        dst.setparams(first_params)
+                    elif current_comparable != comparable_params:
+                        raise ValueError(
+                            "サンプルレート・チャンネル数・ビット深度が一致しないため結合できません。"
+                        )
+
+                    while True:
+                        frames = src.readframes(8192)
+                        if not frames:
+                            break
+                        dst.writeframes(frames)
+
+        for source in sources:
+            _remove_trim_backup(source)
+        _remove_trim_backup(destination)
+        for source in sources:
+            source.unlink(missing_ok=True)
+        temp_destination.rename(destination)
+    except Exception:
+        temp_destination.unlink(missing_ok=True)
+        raise
+    return destination
+
+
 def has_trim_backup(path: Path) -> bool:
     backup_path, _manifest = _find_trim_backup(path)
     return backup_path is not None and backup_path.exists()

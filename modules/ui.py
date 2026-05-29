@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from modules.audio_editor import AudioProcessOptions, analyze_audio_levels, apply_trim_in_place, attenuate_audio_in_place, create_trim_preview, get_audio_metadata, get_waveform_minmax, has_split_backup, has_trim_backup, restore_split_backup, restore_trim_backup, split_audio_in_place
+from modules.audio_editor import AudioProcessOptions, analyze_audio_levels, apply_trim_in_place, attenuate_audio_in_place, create_trim_preview, get_audio_metadata, get_waveform_minmax, has_split_backup, has_trim_backup, merge_audio_files, restore_split_backup, restore_trim_backup, split_audio_in_place
 from modules.audio_player import AudioPlayer
 from modules.csv_logger import write_rename_log
 from modules.file_parser import ParseResult, ParsedAudioFile, parse_audio_folder
@@ -44,7 +44,7 @@ TABLE_COLUMN_WIDTHS = {
     1: 62,
     2: 62,
     3: 66,
-    4: 176,
+    4: 230,
     5: 380,
     6: 60,
     7: 380,
@@ -110,6 +110,7 @@ class FileRow(ctk.CTkFrame):
         on_play_toggle,
         on_trim,
         on_split,
+        on_merge,
         on_restore_audio,
         on_text_change,
         on_drag_start,
@@ -127,6 +128,7 @@ class FileRow(ctk.CTkFrame):
         self._on_play_toggle = on_play_toggle
         self._on_trim = on_trim
         self._on_split = on_split
+        self._on_merge = on_merge
         self._on_restore_audio = on_restore_audio
         self._on_text_change = on_text_change
         self._on_drag_start = on_drag_start
@@ -159,6 +161,7 @@ class FileRow(ctk.CTkFrame):
         action_frame.grid_propagate(False)
         ctk.CTkButton(action_frame, text="余白", width=50, height=ROW_BUTTON_HEIGHT, command=lambda: self._on_trim(self.file_item.path)).grid(row=0, column=0, padx=(0, 4), sticky="w")
         ctk.CTkButton(action_frame, text="分割", width=50, height=ROW_BUTTON_HEIGHT, command=lambda: self._on_split(self.file_item)).grid(row=0, column=1, padx=(0, 4), sticky="w")
+        ctk.CTkButton(action_frame, text="結合", width=50, height=ROW_BUTTON_HEIGHT, command=lambda: self._on_merge(self.file_item)).grid(row=0, column=2, padx=(0, 4), sticky="w")
         self.restore_trim_button = ctk.CTkButton(
             action_frame,
             text="戻す",
@@ -167,7 +170,7 @@ class FileRow(ctk.CTkFrame):
             **SECONDARY_BUTTON_STYLE,
             command=lambda: self._on_restore_audio(self.file_item.path),
         )
-        self.restore_trim_button.grid(row=0, column=2, sticky="w")
+        self.restore_trim_button.grid(row=0, column=3, sticky="w")
         if not trim_modified and not split_restorable:
             self.restore_trim_button.configure(state="disabled")
 
@@ -390,7 +393,7 @@ class BatchRenameApp(ctk.CTk):
             1: ("OK", "center", (0, 0)),
             2: ("NG", "center", (0, 0)),
             3: ("再生", "center", (0, 0)),
-            4: ("余白", "center", (0, 0)),
+            4: ("音声編集", "center", (0, 0)),
             5: ("ファイル名", "w", (10, 10)),
             6: ("元番号", "center", (0, 0)),
             7: ("テキスト部分", "w", (10, 12)),
@@ -946,6 +949,7 @@ class BatchRenameApp(ctk.CTk):
                 self.toggle_play_audio,
                 self.open_trim_dialog,
                 self.open_split_dialog,
+                self.open_merge_dialog,
                 self.restore_audio_backup,
                 self._on_text_change,
                 self.start_row_drag,
@@ -1311,6 +1315,137 @@ class BatchRenameApp(ctk.CTk):
         index = names.index(source_name)
         names[index:index + 1] = replacement_names
         session.manual_order = names
+
+    def _replace_adjacent_names_with_one(self, session: FolderSession, first_name: str, second_name: str, destination_name: str) -> None:
+        names = [file_item.original_filename for file_item in self._ordered_files(session)]
+        if first_name not in names or second_name not in names:
+            session.manual_order = names
+            return
+        first_index = names.index(first_name)
+        names = [name for name in names if name not in {first_name, second_name}]
+        names.insert(min(first_index, len(names)), destination_name)
+        session.manual_order = names
+
+    @staticmethod
+    def _normalize_wav_filename(raw_name: str) -> str:
+        name = Path(raw_name.strip()).name
+        if not name:
+            raise ValueError("結合後のファイル名を入力してください。")
+        if name.startswith("."):
+            raise ValueError("先頭が . のファイル名は使えません。")
+        if Path(name).suffix and Path(name).suffix.lower() != ".wav":
+            raise ValueError("結合後のファイル名は .wav にしてください。")
+        if not Path(name).suffix:
+            name = f"{name}.wav"
+        if DISPLAY_PREFIX_PATTERN.match(Path(name).stem) is None:
+            raise ValueError("結合後のファイル名は先頭番号から始めてください。")
+        return name
+
+    def open_merge_dialog(self, file_item: ParsedAudioFile) -> None:
+        session = self.folder_sessions.get(self.current_folder) if self.current_folder else None
+        if session is None:
+            messagebox.showwarning("未選択", "表示中の対象がありません。")
+            return
+        if self.show_mode_var.get() != "全件":
+            messagebox.showwarning("表示条件", "結合は『全件』表示で、一覧上の隣接ファイルに対して実行してください。")
+            return
+
+        ordered = self._ordered_files(session)
+        names = [item.original_filename for item in ordered]
+        if file_item.original_filename not in names:
+            messagebox.showwarning("未選択", "結合対象のファイルが一覧にありません。")
+            return
+        index = names.index(file_item.original_filename)
+        if index >= len(ordered) - 1:
+            messagebox.showwarning("結合不可", "このファイルの次に結合できる音声がありません。")
+            return
+
+        first_item = ordered[index]
+        second_item = ordered[index + 1]
+        try:
+            first_metadata = get_audio_metadata(first_item.path)
+            second_metadata = get_audio_metadata(second_item.path)
+        except Exception as exc:
+            messagebox.showerror("結合エラー", str(exc))
+            return
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("結合")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+
+        filename_var = tk.StringVar(value=first_item.original_filename)
+        first_duration = self._format_duration_ms(first_metadata.duration_ms)
+        second_duration = self._format_duration_ms(second_metadata.duration_ms)
+        total_duration = self._format_duration_ms(first_metadata.duration_ms + second_metadata.duration_ms)
+
+        def close_dialog() -> None:
+            dialog.grab_release()
+            dialog.destroy()
+
+        def apply_merge() -> None:
+            try:
+                destination_name = self._normalize_wav_filename(filename_var.get())
+                destination = first_item.path.parent / destination_name
+                if not messagebox.askyesno(
+                    "確認",
+                    f"以下の2件をこの順番で結合します。\n\n"
+                    f"1. {first_item.original_filename}\n"
+                    f"2. {second_item.original_filename}\n\n"
+                    f"結合後: {destination_name}",
+                    parent=dialog,
+                ):
+                    return
+                self.stop_audio()
+                self._cleanup_preview_temp()
+                merged_path = merge_audio_files([first_item.path, second_item.path], destination)
+                merged_name = merged_path.name
+            except Exception as exc:
+                messagebox.showerror("結合エラー", str(exc), parent=dialog)
+                return
+
+            source_names = [first_item.original_filename, second_item.original_filename]
+            if session.selected_filenames is not None:
+                for source_name in source_names:
+                    session.selected_filenames.discard(source_name)
+                session.selected_filenames.add(merged_name)
+            self._replace_adjacent_names_with_one(session, first_item.original_filename, second_item.original_filename, merged_name)
+            for source_name in source_names:
+                session.ok_flags.pop(source_name, None)
+                session.reviewed_flags.pop(source_name, None)
+                session.edited_texts.pop(source_name, None)
+                session.split_required_filenames.discard(source_name)
+                session.split_origin_map.pop(source_name, None)
+            session.split_required_filenames.discard(merged_name)
+            session.split_origin_map.pop(merged_name, None)
+            self._refresh_session(session)
+            if merged_name in session.ok_flags:
+                session.ok_flags[merged_name] = True
+                session.reviewed_flags[merged_name] = False
+            self._persist_workflow_state()
+            self._render_current_folder()
+            self.status_var.set(f"結合しました: {first_item.original_filename} + {second_item.original_filename} -> {merged_name}")
+            messagebox.showinfo("完了", f"2件の音声を結合しました。\n\n{merged_name}", parent=dialog)
+            close_dialog()
+
+        ctk.CTkLabel(dialog, text="結合", font=ctk.CTkFont(size=20, weight="bold"), anchor="w").grid(row=0, column=0, padx=20, pady=(18, 6), sticky="ew")
+        ctk.CTkLabel(
+            dialog,
+            text=f"1. {first_item.original_filename}  ({first_duration})\n2. {second_item.original_filename}  ({second_duration})",
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, padx=20, pady=(0, 10), sticky="ew")
+        ctk.CTkLabel(dialog, text=f"結合後の長さ: {total_duration}", anchor="w", text_color=("gray35", "gray70")).grid(row=2, column=0, padx=20, pady=(0, 12), sticky="ew")
+        ctk.CTkLabel(dialog, text="結合後のファイル名", anchor="w").grid(row=3, column=0, padx=20, pady=(0, 4), sticky="ew")
+        filename_entry = ctk.CTkEntry(dialog, textvariable=filename_var, width=520)
+        filename_entry.grid(row=4, column=0, padx=20, pady=(0, 16), sticky="ew")
+
+        button_row = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_row.grid(row=5, column=0, padx=20, pady=(0, 18), sticky="e")
+        ctk.CTkButton(button_row, text="閉じる", width=100, fg_color=("#d5d5d5", "#4a4a4a"), hover_color=("#c8c8c8", "#5a5a5a"), command=close_dialog).pack(side="right")
+        ctk.CTkButton(button_row, text="この内容で結合", width=140, command=apply_merge).pack(side="right", padx=(0, 8))
+        filename_entry.focus_set()
 
     def open_split_dialog(self, file_item: ParsedAudioFile) -> None:
         session = self.folder_sessions.get(self.current_folder) if self.current_folder else None
